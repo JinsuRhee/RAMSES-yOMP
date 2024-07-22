@@ -983,7 +983,7 @@ subroutine starform2(ind_grid,ngrid,ilevel,ntot,mstar_tot_tmp,mstar_lost_tmp,see
                           sfr_ff(i) = 0.0
                           ok(i)     = .false.
                        endif
-                    !  Federrath+ (2012) best fit model, see Kimm+ (2017) but with no jeans criterion, equivalent to NH
+                    !  Federrath+ (2012) best fit model, see Kimm+ (2017) but with no jeans criterion, equivalent to NH but without sound speed term on virial parameter
                     CASE (6)
                        alpha0    = (5.0*sigma2)/(pi*factG*d*dx_loc**2)
                        b_turb    = 0.4

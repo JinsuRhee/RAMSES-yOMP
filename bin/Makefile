@@ -117,8 +117,8 @@ PATCH := $(subst $(SPACE),:,$(PATCH))
 #FFLAGS = -cpp $(DEFINES) -DWITHOUTMPI
 
 # --- MPI, gfortran syntax ------------------------------
-#F90 = mpif90 -frecord-marker=4 -O3 -ffree-line-length-none -g -fbacktrace $(OMPFLAG)
-#FFLAGS = -x f95-cpp-input $(DEFINES)
+F90 = mpif90 -frecord-marker=4 -O3 -ffree-line-length-none -g -fbacktrace $(OMPFLAG)
+FFLAGS = -x f95-cpp-input $(DEFINES)
 
 # --- MPI, gfortran DEBUG syntax ------------------------------
 #F90 = mpif90 -frecord-marker=4 -ffree-line-length-none -fbacktrace -g -O0 -fbounds-check -Wuninitialized -Wall $(OMPFLAG)
@@ -137,8 +137,8 @@ PATCH := $(subst $(SPACE),:,$(PATCH))
 #FFLAGS = -warn all -O0 -g -traceback -fpe0 -ftrapuv -check bounds -cpp $(DEFINES) -DNOSYSTEM
 
 # --- MPI, ifort syntax for Xeon phi ------------------------------
-F90 = mpiifort -Wl,-z,noexecstack $(OMPFLAG)
-FFLAGS = -cpp $(DEFINES) -O3 -fPIC -free -xMIC-AVX512 -fma -align array64byte -finline-functions -DNOSYSTEM
+#F90 = mpiifort -Wl,-z,noexecstack $(OMPFLAG)
+#FFLAGS = -cpp $(DEFINES) -O3 -fPIC -free -xMIC-AVX512 -fma -align array64byte -finline-functions -DNOSYSTEM
 
 # --- MPI, ifort DEBUG syntax for Xeon phi ------------------------------
 #F90 = mpiifort -Wl,-z,noexecstack $(OMPFLAG) 
