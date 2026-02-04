@@ -1129,15 +1129,15 @@ subroutine merge_sink(ilevel)
         ax2=bhspin(isink,1)
         ay2=bhspin(isink,2)
         az2=bhspin(isink,3)
-        xx1=xsink_new(igrp,1)
-        yy1=xsink_new(igrp,2)
-        zz1=xsink_new(igrp,3)
+        xx1=xsink_new(igrp,1)/M1+xsink(int(oksink_new(igrp)),1)
+        yy1=xsink_new(igrp,2)/M1+xsink(int(oksink_new(igrp)),2)
+        zz1=xsink_new(igrp,3)/M1+xsink(int(oksink_new(igrp)),3)
         xx2=xsink(isink,1)
         yy2=xsink(isink,2)
         zz2=xsink(isink,3)
-        vvx1=vsink_new(igrp,1)
-        vvy1=vsink_new(igrp,2)
-        vvz1=vsink_new(igrp,3)
+        vvx1=vsink_new(igrp,1)/M1
+        vvy1=vsink_new(igrp,2)/M1
+        vvz1=vsink_new(igrp,3)/M1
         vvx2=vsink(isink,1)
         vvy2=vsink(isink,2)
         vvz2=vsink(isink,3)
@@ -1157,15 +1157,15 @@ subroutine merge_sink(ilevel)
            xx1=xsink(isink,1)
            yy1=xsink(isink,2)
            zz1=xsink(isink,3)
-           xx2=xsink_new(igrp,1)
-           yy2=xsink_new(igrp,2)
-           zz2=xsink_new(igrp,3)
+           xx2=xsink_new(igrp,1)/M2+xsink(int(oksink_new(igrp)),1)
+           yy2=xsink_new(igrp,2)/M2+xsink(int(oksink_new(igrp)),2)
+           zz2=xsink_new(igrp,3)/M2+xsink(int(oksink_new(igrp)),3)
            vvx1=vsink(isink,1)
            vvy1=vsink(isink,2)
            vvz1=vsink(isink,3)
-           vvx2=vsink_new(igrp,1)
-           vvy2=vsink_new(igrp,2)
-           vvz2=vsink_new(igrp,3)
+           vvx2=vsink_new(igrp,1)/M2
+           vvy2=vsink_new(igrp,2)/M2
+           vvz2=vsink_new(igrp,3)/M2
         else
            ! If it's first time
            M2=0d0
