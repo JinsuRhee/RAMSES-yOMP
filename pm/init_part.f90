@@ -1098,9 +1098,7 @@ contains
 #ifdef NCHEM
           if(nchem>0)then
              do ich=1,nchem
-                do j=1,npart
-                   chp(ipart,ich)=0d0
-                end do
+                chp(ipart,ich)=0d0
              end do
           end if
 #endif
