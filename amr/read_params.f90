@@ -1,5 +1,6 @@
 subroutine read_params
   use amr_commons
+  use subsub_commons
   use pm_parameters
   use poisson_parameters
   use hydro_parameters
@@ -373,7 +374,13 @@ subroutine read_params
 #endif
   if (movie)call set_movie_vars
 
+  call read_subsub_params(nml_ok)
+  
   close(1)
+
+if(myid==1) print *, subsub_testa, subsub_testb, subsub_testc
+if(myid==1 .and. SUBSUB_ON) print*, "subsub is on"
+if(myid==1) call clean_stop
 
   ! Send the token
 #ifndef WITHOUTMPI

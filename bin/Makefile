@@ -117,8 +117,8 @@ PATCH := $(subst $(SPACE),:,$(PATCH))
 #FFLAGS = -cpp $(DEFINES) -DWITHOUTMPI
 
 # --- MPI, gfortran syntax ------------------------------
-#F90 = mpif90 -frecord-marker=4 -O3 -ffree-line-length-none -g -fbacktrace $(OMPFLAG)
-#FFLAGS = -x f95-cpp-input $(DEFINES)
+F90 = mpif90 -frecord-marker=4 -O3 -ffree-line-length-none -g -fbacktrace $(OMPFLAG)
+FFLAGS = -x f95-cpp-input $(DEFINES)
 
 # --- MPI, gfortran DEBUG syntax ------------------------------
 #F90 = mpif90 -frecord-marker=4 -ffree-line-length-none -fbacktrace -g -O0 -fbounds-check -Wuninitialized -Wall $(OMPFLAG)
@@ -137,8 +137,8 @@ PATCH := $(subst $(SPACE),:,$(PATCH))
 #FFLAGS = -warn all -O0 -g -traceback -fpe0 -ftrapuv -check bounds -cpp $(DEFINES) -DNOSYSTEM
 
 # --- MPI, ifort syntax for Xeon phi ------------------------------
-F90 = mpiifort -Wl,-z,noexecstack $(OMPFLAG)
-FFLAGS = -cpp $(DEFINES) -O3 -fPIC -free -xMIC-AVX512 -fma -align array64byte -finline-functions -DNOSYSTEM
+#F90 = mpiifort -Wl,-z,noexecstack $(OMPFLAG)
+#FFLAGS = -cpp $(DEFINES) -O3 -fPIC -free -xMIC-AVX512 -fma -align array64byte -finline-functions -DNOSYSTEM
 
 # --- MPI, ifort DEBUG syntax for Xeon phi ------------------------------
 #F90 = mpiifort -Wl,-z,noexecstack $(OMPFLAG) 
@@ -182,7 +182,7 @@ VPATH := $(PATCH)
 ifeq ($(RT),1)
 VPATH := $(VPATH):../rt
 endif
-VPATH := $(VPATH):../$(SOLVER):../aton:../hydro:../pm:../poisson:../amr:../io:../amr/geometry
+VPATH := $(VPATH):../$(SOLVER):../aton:../hydro:../pm:../poisson:../amr:../io:../amr/geometry:../subsub
 #############################################################################
 # All objects
 MODOBJ = mpi_mod.o amr_parameters.o amr_commons.o random.o pm_parameters.o pm_commons.o poisson_parameters.o dump_utils.o
@@ -220,6 +220,8 @@ POISSONOBJ = init_poisson.o phi_fine_cg.o interpol_phi.o force_fine.o multigrid_
 HYDROOBJ = init_hydro.o init_flow_fine.o write_screen.o output_hydro.o courant_fine.o godunov_fine.o \
            uplmde.o umuscl.o interpol_hydro.o godunov_utils.o condinit.o hydro_flag.o hydro_boundary.o \
            boundana.o read_hydro_params.o synchro_hydro_fine.o
+# SUBSUB objects
+SUBSUBOBJ = subsub_parameters.o subsub_commons.o read_subsub_params.o
 # RT objects
 ifeq ($(RT),1)
 RTOBJ = rt_init_hydro.o rt_init_xion.o rt_init.o rt_init_flow_fine.o rt_output_hydro.o rt_godunov_fine.o \
@@ -231,7 +233,7 @@ endif
 $(foreach PP, $(subst :, ,$(PATCH)), $(wildcard $(shell [ -z $(PP) ] || -sinclude $(PP)/Makefile)))
 
 # All objects
-AMRLIB = $(AMROBJ) $(HYDROOBJ) $(PMOBJ) $(POISSONOBJ)
+AMRLIB = $(AMROBJ) $(HYDROOBJ) $(PMOBJ) $(POISSONOBJ) $(SUBSUBOBJ)
 ifeq ($(RT),1)
 AMRLIB += $(RTOBJ)
 endif
