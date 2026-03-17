@@ -5,6 +5,7 @@ subroutine adaptive_loop
   use poisson_commons
   use cooling_module
   use tracer_utils
+  use subsub_commons
 #ifdef RT
   use rt_hydro_commons
 #endif
@@ -75,7 +76,10 @@ subroutine adaptive_loop
            call create_cloud_from_sink
         end if
      end if
+
+     if(subsub_on) call init_subsub
   end if
+  if(subsub_on) call init_subsub
   if(nrestart==0)call init_refine_2  ! Build initial AMR grid again
 
 #ifndef WITHOUTMPI

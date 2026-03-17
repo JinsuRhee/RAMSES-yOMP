@@ -25,10 +25,8 @@ subroutine read_subsub_params(nml_ok)
 
 #endif
 
-  namelist/subsub_params/SUBSUB_on &
-       & ,subsub_testa &
-       & ,subsub_testb &
-       & ,subsub_testc
+  namelist/subsub_params/subsub_on &
+       & ,subsub_level
 
 
   ! Read namelist file

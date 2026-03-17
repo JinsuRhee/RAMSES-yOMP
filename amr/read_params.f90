@@ -378,10 +378,6 @@ subroutine read_params
   
   close(1)
 
-if(myid==1) print *, subsub_testa, subsub_testb, subsub_testc
-if(myid==1 .and. SUBSUB_ON) print*, "subsub is on"
-if(myid==1) call clean_stop
-
   ! Send the token
 #ifndef WITHOUTMPI
   if(IOGROUPSIZE>0) then

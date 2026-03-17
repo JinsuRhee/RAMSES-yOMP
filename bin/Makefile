@@ -195,6 +195,7 @@ ifeq ($(RT),1)
 MODOBJ += rt_parameters.o rt_hydro_commons.o coolrates_module.o \
          rt_spectra.o rt_cooling_module.o rt_flux_module.o
 endif
+MODOBJ += subsub_parameters.o subsub_commons.o
 ifeq ($(DICE),1)
 AMROBJ = dice_commons.o
 else
@@ -221,7 +222,7 @@ HYDROOBJ = init_hydro.o init_flow_fine.o write_screen.o output_hydro.o courant_f
            uplmde.o umuscl.o interpol_hydro.o godunov_utils.o condinit.o hydro_flag.o hydro_boundary.o \
            boundana.o read_hydro_params.o synchro_hydro_fine.o
 # SUBSUB objects
-SUBSUBOBJ = subsub_parameters.o subsub_commons.o read_subsub_params.o
+SUBSUBOBJ = read_subsub_params.o init_subsub.o subsub_utils.o
 # RT objects
 ifeq ($(RT),1)
 RTOBJ = rt_init_hydro.o rt_init_xion.o rt_init.o rt_init_flow_fine.o rt_output_hydro.o rt_godunov_fine.o \
