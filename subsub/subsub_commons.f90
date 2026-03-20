@@ -2,19 +2,21 @@ module subsub_commons
   use amr_parameters
   use subsub_parameters
 
-  real(dp)::subsub_testa=1.0D0
-  real(dp)::subsub_testb=2.0D0
-  real(dp)::subsub_testc=3.0D0
-
-  
+  integer :: subsub_nobj
 
   type subsub_type
      integer                               :: nlevel
-     integer                               :: sink_id
-     real(dp), dimension(:,:), allocatable :: xg
+     integer                               :: sink_ind
+     real(dp)                              :: mass_tot
+     real(dp)                              :: vxc, vyc, vzc
+     integer                               :: clevel
+     !real(dp), dimension(:,:), allocatable :: xg
      real(dp), dimension(:,:), allocatable :: vg
      real(dp), dimension(:,:), allocatable :: hydro
   end type subsub_type
+
+  type(subsub_type), dimension(:), allocatable :: subsub_obj
+  integer :: subsub_end = 0
 
 
 end module subsub_commons

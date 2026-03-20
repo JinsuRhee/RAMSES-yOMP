@@ -77,7 +77,7 @@ subroutine adaptive_loop
         end if
      end if
 
-     if(subsub_on) call init_subsub
+     
   end if
   if(subsub_on) call init_subsub
   if(nrestart==0)call init_refine_2  ! Build initial AMR grid again
@@ -106,6 +106,7 @@ subroutine adaptive_loop
   if(myid==1)write(*,*)'Starting time integration'
 
   do ! Main time loop
+if(myid.eq.1) write(*,*)'%123123 nisnk = ', nsink
                                call timer('coarse levels','start')
 
 #ifndef WITHOUTMPI
