@@ -3,6 +3,7 @@ recursive subroutine amr_step(ilevel,icount)
   use pm_commons
   use hydro_commons
   use poisson_commons
+  use subsub_commons
 #ifdef RT
   use rt_hydro_commons
   use SED_module
@@ -212,6 +213,8 @@ recursive subroutine amr_step(ilevel,icount)
                                call timer('sinks - create','start')
         call create_sink
      end if
+
+     if(subsub_on) call subsub_update()
   endif
 
   !--------------------

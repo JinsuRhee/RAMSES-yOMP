@@ -1322,6 +1322,8 @@ subroutine merge_sink(ilevel)
   end do
   ! End loop over sinks
   nsink=new_sink
+
+
 !$omp parallel
 !$omp do
   do isink=1,new_sink
@@ -1529,7 +1531,6 @@ subroutine merge_sink(ilevel)
   if (MC_tracer) then
      deallocate(psink_inv)
   end if
-
 
 111 format('   Entering merge_sink for level ',I2)
 

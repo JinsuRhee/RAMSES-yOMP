@@ -14,7 +14,7 @@ subroutine adaptive_loop
 #ifndef WITHOUTMPI
   integer(kind=8)::n_step
   integer::info,tot_pt
-  integer::i,ncell
+  integer::i,ncell,j
   real(kind=8)::tt1,tt2,muspt,muspt_this_step,wallsec,dumpsec,stopsec
   real(kind=4)::real_mem,real_mem_tot
 #endif
@@ -107,6 +107,24 @@ subroutine adaptive_loop
 
   do ! Main time loop
 if(myid.eq.1) write(*,*)'%123123 nisnk = ', nsink
+if(myid.eq.1)then
+  do i=1, nsink
+    write(*,*) idsink(i)
+  enddo
+endif
+  !!----- Debug
+do i=1, ncpu
+  if(myid .eq. i .and. subsub_end .gt. 0) then
+    write(*,*) i, subsub_end, subsub_nsink
+    !do j=1, subsub_end
+    !  write(*,*) subsub_obj(j)%sink_id
+    !enddo
+  endif
+
+  do j=1, 10000000
+  enddo
+  call MPI_BARRIER(MPI_COMM_WORLD,info)
+enddo
                                call timer('coarse levels','start')
 
 #ifndef WITHOUTMPI

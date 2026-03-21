@@ -15,10 +15,13 @@ subroutine init_subsub
   !! Local Varaibles
   integer :: i, j
   integer,dimension(1:nsink)::itemp
-  integer :: subsu_sinkinmyid, subsu_sinktot, info
+  integer :: subsub_sinkinmyid, info
+  integer :: ilun
+  character(LEN=5)::nchar
 
 
-
+  call subsub_precision_mpi()
+  
   !!-----
   !! Check
   !!-----
@@ -33,8 +36,10 @@ subroutine init_subsub
 
   if(nsink.eq.0)return
 
-  
-  
+  !!-----
+  !! Retrieve from the restart
+  !!-----
+ 
 
   !!-----
   !! Create and input obj
@@ -44,19 +49,23 @@ subroutine init_subsub
   if(verbose)write(*,*)'Entering init_subsub'
 
   allocate(subsub_obj(1:nsinkmax))
+  subsub_end = 0
 
   do i=1, nsink
     call subsub_create(i)
   enddo
 
 #ifndef WITHOUTMPI
-  subsu_sinkinmyid = subsub_end
-  subsu_sinktot = 0
-  call MPI_ALLREDUCE(subsu_sinkinmyid,subsu_sinktot,ncpu,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,info)
+  subsub_sinkinmyid = subsub_end
+  subsub_nsink = 0 !! initialize to 0
+  call MPI_ALLREDUCE(subsub_sinkinmyid,subsub_nsink,1,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,info)
 
-  if(subsub_sinktot .ne. nsink) then
+  if(subsub_nsink .ne. nsink) then
     if(myid.eq.1) call subsub_log('some sinks miss in domains', 'init_subsub_2')
     call clean_stop
+  endif
+#else
+  subsub_nsink = nsink
 #endif
 
 end subroutine init_subsub
@@ -112,12 +121,12 @@ subroutine subsub_create(sinkid)
   !! if not restart
   dx=0.5D0**ind_level
   subsub_dummy%sink_ind = sinkid
+  subsub_dummy%sink_id  = idsink(sinkid)
   subsub_dummy%mass_tot=(dx**ndim) * max(uold(ind_cell,1), smallr)
   subsub_dummy%vxc=uold(ind_cell,2)
   subsub_dummy%vyc=uold(ind_cell,3)
   subsub_dummy%vzc=uold(ind_cell,4)
   subsub_dummy%clevel=ind_level
-  !! if restart
 
 
   !!-----
@@ -155,12 +164,11 @@ subroutine subsub_create(sinkid)
   !!-----
   !! Initialize internal grid
   !!-----
-  allocate(subsub_dummy%vg(1:subsub_level**3, 1:ndim))
-  allocate(subsub_dummy%hydro(1:subsub_level**3, 1:1))  ! 1 for density
+  call subsub_allocate(subsub_dummy)
 
-  subsub_dummy(1)%vg(:,1) = 0.  !! zero velocity IC for test
-  subsub_dummy(1)%vg(:,2) = 0.
-  subsub_dummy(1)%vg(:,3) = 0.
+  subsub_dummy%vg(:,1) = 0.  !! zero velocity IC for test
+  subsub_dummy%vg(:,2) = 0.
+  subsub_dummy%vg(:,3) = 0.
 
   subsub_dummy%hydro(:,1) =  max(uold(ind_cell,1), smallr)  !! uniform density IC
 
@@ -168,6 +176,11 @@ subroutine subsub_create(sinkid)
   !! Input to subsub_obj array
   !!-----
   call subsub_input(subsub_dummy)
+
+  !!-----
+  !! Deallocate
+  !!-----
+  call subsub_deallocate(subsub_dummy)
 
 end subroutine subsub_create
 !################################################################
@@ -189,5 +202,6 @@ subroutine subsub_input(subsub_dummy)
   endif
 
   subsub_obj(subsub_end) = subsub_dummy
+
 
 end subroutine subsub_input

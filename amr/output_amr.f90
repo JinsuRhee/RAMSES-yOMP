@@ -6,6 +6,7 @@ subroutine dump_all
   use amr_commons
   use pm_commons
   use hydro_commons
+  use subsub_commons
   use cooling_module
   use mpi_mod
   implicit none
@@ -172,6 +173,17 @@ subroutine dump_all
 #endif
         if(myid==1.and.print_when_io) write(*,*)'End backup gadget format'
      end if
+
+     if(subsub_on .and. sink)then
+       if(myid==1.and.print_when_io) write(*,*)'Start backup subsub objects'
+       filename=TRIM(filedir)//'subsub_'//TRIM(nchar)//'.out'
+       call subsub_backup(filename)
+#ifndef WITHOUTMPI
+       if(synchro_when_io) call MPI_BARRIER(MPI_COMM_WORLD,info)
+#endif
+       if(myid==1.and.print_when_io) write(*,*)'End backup subsub objects'
+     endif
+
 
      if(myid==1.and.print_when_io) write(*,*)'Start timer'
      ! Output timer: must be called by each process !
