@@ -5,12 +5,16 @@ module subsub_commons
   type subsub_type
      integer                               :: sink_ind
      integer                               :: sink_id
+     real(dp)                              :: sink_mass
      real(dp)                              :: mass_tot
      real(dp)                              :: vxc, vyc, vzc
      integer                               :: clevel
      !real(dp), dimension(:,:), allocatable :: xg
-     real(dp), dimension(:,:), allocatable :: vg !! nlevel^3 X ndim
+     real(dp), dimension(:,:), allocatable :: vg !! ngrid^3 X ndim
      real(dp), dimension(:,:), allocatable :: hydro !! nlevel^3 X subsub_nhydro
+     
+     real(dp), dimension(:), allocatable :: phi !! ngird^3
+     real(dp), dimension(:,:), allocatable :: fg !! ngrid^3 X ndim
   end type subsub_type
 
   type(subsub_type), dimension(:), allocatable :: subsub_obj    !! has the size of nisnkmax in each cpu
@@ -18,10 +22,14 @@ module subsub_commons
 
   integer :: subsub_nsink !! total number of sinks (should be equal to nsink if a sink is not created)
   integer :: subsub_mpidp
+  real(dp) :: subsub_boxlen
 
 contains
   subroutine subsub_precision_mpi()
+    use mpi_mod
+    implicit none
     integer :: ierr
+    
 
     if (dp == kind(1.0E0)) then
       subsub_mpidp = MPI_REAL

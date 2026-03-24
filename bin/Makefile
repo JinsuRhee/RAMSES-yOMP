@@ -222,7 +222,7 @@ HYDROOBJ = init_hydro.o init_flow_fine.o write_screen.o output_hydro.o courant_f
            uplmde.o umuscl.o interpol_hydro.o godunov_utils.o condinit.o hydro_flag.o hydro_boundary.o \
            boundana.o read_hydro_params.o synchro_hydro_fine.o
 # SUBSUB objects
-SUBSUBOBJ = read_subsub_params.o init_subsub.o subsub_utils.o
+SUBSUBOBJ = read_subsub_params.o init_subsub.o subsub_utils.o subsub_io.o subsub_poisson.o
 # RT objects
 ifeq ($(RT),1)
 RTOBJ = rt_init_hydro.o rt_init_xion.o rt_init.o rt_init_flow_fine.o rt_output_hydro.o rt_godunov_fine.o \

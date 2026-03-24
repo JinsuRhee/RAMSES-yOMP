@@ -214,7 +214,10 @@ recursive subroutine amr_step(ilevel,icount)
         call create_sink
      end if
 
-     if(subsub_on) call subsub_update()
+     if(subsub_on) then
+                               call timer('subsub - update','start')
+        call subsub_update()
+     endif
   endif
 
   !--------------------
