@@ -13,6 +13,8 @@ subroutine subsub_backup(filename)
 
   ! Local variables
   integer :: i, j, unit_out
+  real(dp) :: scale_nH,scale_T2,scale_l,scale_d,scale_t,scale_v
+
 
   if (verbose) write(*,*) 'Entering backup_subsub'
 
@@ -27,6 +29,9 @@ subroutine subsub_backup(filename)
 #endif
 
   !!----- Write
+  !! Constant
+  call units(scale_l,scale_t,scale_d,scale_v,scale_nH,scale_T2)
+
   if(myid .eq. 1) then
     open(newunit=unit_out, file=TRIM(filename), form='unformatted')
 
@@ -36,24 +41,43 @@ subroutine subsub_backup(filename)
     write(unit_out) subsub_ngrid
     write(unit_out) subsub_nhydro
     write(unit_out) ndim
+    write(unit_out) aexp
+    write(unit_out) scale_l
+    write(unit_out) scale_t
+    write(unit_out) scale_d
+    write(unit_out) scale_v
+    write(unit_out) scale_nH
+    write(unit_out) scale_T2
+
+    if(subsub_nsink .eq. 0) then
+      close(unit_out)
+      return
+    endif
 
     do i=1, subsub_nsink
+write(*,*) i, maxval(subsub_dump(i)%hydro(:,1)), minval(subsub_dump(i)%hydro(:,1))
+write(*,*) maxval(subsub_dump(i)%hydro(:,2)), minval(subsub_dump(i)%hydro(:,2))
       write(unit_out) subsub_dump(i)%sink_ind          !! sink index
       write(unit_out) subsub_dump(i)%sink_id           !! sink id
       write(unit_out) subsub_dump(i)%sink_mass         !! sink id
       write(unit_out) subsub_dump(i)%mass_tot          !! total mass
-      write(unit_out) subsub_dump(i)%vxc, subsub_dump(i)%vyc, subsub_dump(i)%vzc !! momentum x, y, z
+      write(unit_out) subsub_dump(i)%uold              !! uold of the hosting cell
+      !write(unit_out) subsub_dump(i)%vxc, subsub_dump(i)%vyc, subsub_dump(i)%vzc !! momentum x, y, z
       write(unit_out) subsub_dump(i)%clevel            !! cell level
+      write(unit_out) subsub_dump(i)%domain            !! cell level
 
-      do j=1, ndim
-        write(unit_out) subsub_dump(i)%vg(:,j)           !! vx, vy, vz
-      enddo
+      !do j=1, ndim
+      !  write(unit_out) subsub_dump(i)%vg(:,j)           !! vx, vy, vz
+      !enddo
 
       do j=1, subsub_nhydro
         write(unit_out) subsub_dump(i)%hydro(:,j)
       enddo
     enddo
-  endif 
+    
+
+    close(unit_out)
+  endif
 
   !!----- Deallocate
   if(myid .eq. 1) then
@@ -76,10 +100,10 @@ subroutine subsub_readdump
   !! Local variables
   character(LEN=5)::nchar,ncharcpu
   character(LEN=80)::filename,filedir
-  integer :: i, j, unit_out, info
+  integer :: i, j, unit_out, info, ivar
   integer :: dumint
-  real(dp) :: dumdp, dumdp2(3)
-  real(dp), dimension(1:subsub_ngrid**ndim) :: dumdparr
+  real(dp) :: dumdp, dumdp2(subsub_nhydro)
+  real(dp), dimension(1:subsub_nn) :: dumdparr
   type(subsub_type), dimension(1:nsink) :: subsub_dummy
 
   call title(nrestart,nchar)
@@ -128,41 +152,57 @@ subroutine subsub_readdump
       stop
     endif
 
+    read(unit_out) !aexp
+    read(unit_out) !scale_l
+    read(unit_out) !scale_t
+    read(unit_out) !scale_d
+    read(unit_out) !scale_v
+    read(unit_out) !scale_nH
+    read(unit_out) !scale_T2
+
     !allocate(subsub_dummy(1:nsink))
-    
+    if(subsub_nsink .eq. 0) then
+      close(unit_out)
+      return
+    endif
+
     do i=1, subsub_nsink
       call subsub_allocate(subsub_dummy(i))
-
+  
       read(unit_out) dumint
       subsub_dummy(i)%sink_ind = dumint
-
+  
       read(unit_out) dumint
       subsub_dummy(i)%sink_id = dumint
-
+  
       read(unit_out) dumdp
       subsub_dummy(i)%sink_mass = dumdp
-
+  
       read(unit_out) dumdp
       subsub_dummy(i)%mass_tot = dumdp
-
+  
       read(unit_out) dumdp2
-      subsub_dummy(i)%vxc = dumdp2(1)
-      subsub_dummy(i)%vyc = dumdp2(2)
-      subsub_dummy(i)%vzc = dumdp2(3)
+
+      do ivar=1, subsub_nhydro
+        subsub_dummy(i)%uold(1,ivar) = dumdp2(ivar)
+      enddo
 
       read(unit_out) dumint
       subsub_dummy(i)%clevel = dumint
 
-      do j=1, ndim
-        read(unit_out) dumdparr
-        subsub_dummy(i)%vg(:,j) = dumdparr
-      enddo
-
+      read(unit_out) dumint
+      subsub_dummy(i)%domain = dumint
+  
+      !do j=1, ndim
+      !  read(unit_out) dumdparr
+      !  subsub_dummy(i)%vg(:,j) = dumdparr
+      !enddo
+  
       do j=1, subsub_nhydro
         read(unit_out) dumdparr
         subsub_dummy(i)%hydro(:,j) = dumdparr
       enddo
-
+  
       !! debugger
       if(idsink(subsub_dummy(i)%sink_ind) .ne. subsub_dummy(i)%sink_id) then
         write(*,*) 'order of sink particles changed?'
@@ -209,6 +249,7 @@ end subroutine
 !################################################################
 subroutine subsub_gather(subsub_dump)
   use subsub_commons
+  use subsub_parameters
   use amr_commons
   use pm_commons
   use mpi_mod
@@ -217,7 +258,7 @@ subroutine subsub_gather(subsub_dump)
   type(subsub_type), dimension(1:nsink) :: subsub_dump
 
   ! Local Variables
-  integer :: i, j, info, iend
+  integer :: i, j, info, iend, myobj, ivar
   integer, dimension(1:ncpu) :: subsub_dumpN
   integer :: subsub_nn0, subsub_nn1, subsub_nn2
 
@@ -226,98 +267,79 @@ subroutine subsub_gather(subsub_dump)
   integer,parameter::tag7=6427,tag8=6428,tag9=6429
   integer,parameter::tag10=6430, tag11=6431, tag12=6432
 
+  real(dp), dimension(1:2+subsub_nhydro) :: dblarr
+  integer,  dimension(1:2+subsub_nhydro) :: intarr
+  real(dp) :: tcheck(20)
 
-  !!----- Gather each size of obj
-  if(myid .eq. 1) then
-    subsub_dumpN = 0
-    subsub_dumpN(1) = subsub_end
-
-    do i=2, ncpu
-      call MPI_RECV(subsub_dumpN(i), 1, MPI_INTEGER, i-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    enddo
-  else
-    call MPI_SEND(subsub_end, 1, MPI_INTEGER, 0, tag1, MPI_COMM_WORLD, info)
-  endif
-
-  !!----- Debug
-  !do i=1, ncpu
-  !  if(myid .eq. i) write(*,*) i, subsub_end
-  !  do j=1, 10000000
-  !  enddo
-  !  call MPI_BARRIER(MPI_COMM_WORLD,info)
-  !enddo
-
-
-  if(myid .eq. 1) then 
-    if(sum(subsub_dumpN) .ne. nsink)then
-      if(myid.eq.1) call subsub_log('nsink is not compatible with the sum of subsub_obj in each cpu', 'subsub_gather')
-
-      write(*,*) ' nsink = ', nsink
-      write(*,*) ' tot obj = ', sum(subsub_dumpN)
-      do i=1, ncpu
-        write(*,*) subsub_dumpN(i)
-      enddo
-      stop
-    endif
-  endif
+  if(nsink.eq.0) return
 
   !!----- Allocate first
   if(myid .eq. 1) then
     do i=1, nsink
       call subsub_allocate(subsub_dump(i))
     enddo
-
-    do i=1, subsub_end
-      subsub_dump(i) = subsub_obj(i)
-    enddo
   endif
 
   !!----- Receive
-  subsub_nn0 = subsub_ngrid**ndim
-  subsub_nn1 = (subsub_ngrid**ndim) * ndim
-  subsub_nn2 = (subsub_ngrid**ndim) * subsub_nhydro
-  iend = subsub_end+1
-  if(myid .eq. 1) then
-    do i=2, ncpu
-      if(subsub_dumpN(i).eq.0) cycle
+  subsub_nn0 = subsub_nn
+  subsub_nn1 = (subsub_nn) * ndim
+  subsub_nn2 = (subsub_nn) * subsub_nhydro
 
-      do j=1, subsub_dumpN(i)
+  iend = 0
+  do i=1, nsink
+    myobj = mod(abs(idsink(i)), ncpu) + 1
 
-        call MPI_RECV(subsub_dump(iend)%sink_ind, 1, MPI_INTEGER,  i-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%sink_id,  1, MPI_INTEGER,  i-1, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%sink_mass,1, subsub_mpidp, i-1, tag3, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%mass_tot, 1, subsub_mpidp, i-1, tag4, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%vxc,      1, subsub_mpidp, i-1, tag5, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%vyc,      1, subsub_mpidp, i-1, tag6, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%vzc,      1, subsub_mpidp, i-1, tag7, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%clevel,   1, MPI_INTEGER,  i-1, tag8, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+    if(myobj .eq. 1 .and. myid .eq. 1) then
+      iend = iend + 1
+      subsub_dump(i) = subsub_obj(iend)
+    else
+      if(myid .eq. 1) then
+        call MPI_RECV(intarr(1), 2+subsub_nhydro, MPI_INTEGER,  myobj-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(dblarr(1), 2+subsub_nhydro, subsub_mpidp, myobj-1, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
 
-        call MPI_RECV(subsub_dump(iend)%vg(1,1), subsub_nn1,    subsub_mpidp, i-1, tag9, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%hydro(1,1), subsub_nn2, subsub_mpidp, i-1, tag10, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%phi(1), subsub_nn0,     subsub_mpidp, i-1, tag11, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_dump(iend)%fg(1,1), subsub_nn1,    subsub_mpidp, i-1, tag12, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(subsub_dump(i)%hydro(1,1), subsub_nn2, subsub_mpidp, myobj-1, tag3, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(subsub_dump(i)%phi(1), subsub_nn0,     subsub_mpidp, myobj-1, tag4, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+
+        subsub_dump(i)%sink_ind = intarr(1)
+        subsub_dump(i)%sink_id = intarr(2)
+        subsub_dump(i)%clevel = intarr(3)
+        subsub_dump(i)%domain = intarr(4)
+
+        subsub_dump(i)%sink_mass = dblarr(1)
+        subsub_dump(i)%mass_tot = dblarr(2)
+        do ivar=1, subsub_nhydro
+          subsub_dump(i)%uold(1,ivar) = dblarr(ivar+2)
+        enddo
+      else if(myid .eq. myobj) then
         iend = iend + 1
-      enddo
-    enddo
-  else
-    if(subsub_end .gt. 0) then
-      do i=1, subsub_end
-        call MPI_SEND(subsub_obj(i)%sink_ind, 1, MPI_INTEGER,  0, tag1, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%sink_id,  1, MPI_INTEGER,  0, tag2, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%sink_mass,1, subsub_mpidp, 0, tag3, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%mass_tot, 1, subsub_mpidp, 0, tag4, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%vxc,      1, subsub_mpidp, 0, tag5, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%vyc,      1, subsub_mpidp, 0, tag6, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%vzc,      1, subsub_mpidp, 0, tag7, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%clevel,   1, MPI_INTEGER,  0, tag8, MPI_COMM_WORLD,info)
+        intarr(1) = subsub_obj(iend)%sink_ind
+        intarr(2) = subsub_obj(iend)%sink_id
+        intarr(3) = subsub_obj(iend)%clevel
+        intarr(4) = subsub_obj(iend)%domain
 
-        call MPI_SEND(subsub_obj(i)%vg(1,1), subsub_nn1,    subsub_mpidp, 0, tag9, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%hydro(1,1), subsub_nn2, subsub_mpidp, 0, tag10, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%phi(1), subsub_nn0,     subsub_mpidp, 0, tag11, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_obj(i)%fg(1,1), subsub_nn1,      subsub_mpidp, 0, tag12, MPI_COMM_WORLD,info)
-      enddo
+        dblarr(1)   = subsub_obj(iend)%sink_mass
+        dblarr(2)   = subsub_obj(iend)%mass_tot
+
+        do ivar=1, subsub_nhydro
+          dblarr(2+ivar) = subsub_obj(iend)%uold(1,ivar)
+        enddo
+
+        call MPI_SEND(intarr(1), 2+subsub_nhydro, MPI_INTEGER,  0, tag1, MPI_COMM_WORLD, info)
+        call MPI_SEND(dblarr(1), 2+subsub_nhydro, subsub_mpidp, 0, tag2, MPI_COMM_WORLD, info)
+        
+        call MPI_SEND(subsub_obj(iend)%hydro(1,1), subsub_nn2, subsub_mpidp, 0, tag3, MPI_COMM_WORLD, info)
+        call MPI_SEND(subsub_obj(iend)%phi(1), subsub_nn0,     subsub_mpidp, 0, tag4, MPI_COMM_WORLD, info)
+      endif
     endif
-  endif
+
+    if(iend .gt. subsub_end)then
+      call subsub_log('iend exceeds my subsub_end', 'subsub_gather')
+      write(*,*) iend, subsub_end, i, idsink(i)
+      stop
+    endif
+
+    !call MPI_BARRIER(MPI_COMM_WORLD, info)
+  enddo
 end subroutine subsub_gather
 !################################################################
 !################################################################
@@ -344,6 +366,8 @@ subroutine subsub_spread(subsub_dummy)
   integer, dimension(1:nsink) :: ismysink_dump, ismysink
   integer :: subsub_sinkinmyid
   real(dp):: scale
+  real(dp), dimension(1:20) :: dblarr
+  integer, dimension(1:20) :: intarr
   !real(dp):: dx, dx_max
 
   nx_loc=(icoarse_max-icoarse_min+1)
@@ -356,9 +380,10 @@ subroutine subsub_spread(subsub_dummy)
   !! Check ownwership
   !!-----
   do i=1, nsink
-    ismy = -1
-    call subsub_finddomain(xsink(i,1)/scale, xsink(i,2)/scale, xsink(i,3)/scale, ismy)
-    if(ismy .gt. 0) ismysink_dump(i) = myid
+    !ismy = -1
+    !call subsub_finddomain(xsink(i,1)/scale, xsink(i,2)/scale, xsink(i,3)/scale, ismy)
+    !if(ismy .gt. 0) ismysink_dump(i) = myid
+    ismysink_dump(i) = mod(abs(idsink(i)),ncpu) + 1
   enddo
 
   call MPI_ALLREDUCE(ismysink_dump,ismysink,nsink,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,info)
@@ -367,9 +392,9 @@ subroutine subsub_spread(subsub_dummy)
   !! Spread
   !!-----
   subsub_end = 0
-  subsub_nn0 = subsub_ngrid**ndim
-  subsub_nn1 = (subsub_ngrid**ndim) * ndim
-  subsub_nn2 = (subsub_ngrid**ndim) * subsub_nhydro
+  subsub_nn0 = subsub_nn
+  subsub_nn1 = (subsub_nn) * ndim
+  subsub_nn2 = (subsub_nn) * subsub_nhydro
 
   do i=1, nsink
     if(myid .eq. 1) then
@@ -378,41 +403,45 @@ subroutine subsub_spread(subsub_dummy)
         call subsub_allocate(subsub_obj(subsub_end))
         subsub_obj(subsub_end) = subsub_dummy(i)
       else
-        call MPI_SEND(subsub_dummy(i)%sink_ind, 1, MPI_INTEGER,  ismysink(i)-1, tag1, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%sink_id,  1, MPI_INTEGER,  ismysink(i)-1, tag2, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%sink_mass,1, subsub_mpidp, ismysink(i)-1, tag3, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%mass_tot, 1, subsub_mpidp, ismysink(i)-1, tag4, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%vxc,      1, subsub_mpidp, ismysink(i)-1, tag5, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%vyc,      1, subsub_mpidp, ismysink(i)-1, tag6, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%vzc,      1, subsub_mpidp, ismysink(i)-1, tag7, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%clevel,   1, MPI_INTEGER,  ismysink(i)-1, tag8, MPI_COMM_WORLD,info)
+
+        intarr(1) = subsub_dummy(i)%sink_ind
+        intarr(2) = subsub_dummy(i)%sink_id
+        intarr(3) = subsub_dummy(i)%clevel
+        intarr(4) = subsub_dummy(i)%domain
+
+        dblarr(1) = subsub_dummy(i)%sink_mass
+        dblarr(2) = subsub_dummy(i)%mass_tot
+        dblarr(3:7) = subsub_dummy(i)%uold(1,:)
+
+        call MPI_SEND(intarr(1), 20, MPI_INTEGER,  ismysink(i)-1, tag1, MPI_COMM_WORLD, info)
+        call MPI_SEND(dblarr(1), 20, subsub_mpidp, ismysink(i)-1, tag2, MPI_COMM_WORLD, info)
         
-        call MPI_SEND(subsub_dummy(i)%vg(1,1), subsub_nn1,    subsub_mpidp, ismysink(i)-1, tag9, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%hydro(1,1), subsub_nn2, subsub_mpidp, ismysink(i)-1, tag10, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%phi(1), subsub_nn0,     subsub_mpidp, ismysink(i)-1, tag11, MPI_COMM_WORLD,info)
-        call MPI_SEND(subsub_dummy(i)%fg(1,1), subsub_nn1,    subsub_mpidp, ismysink(i)-1, tag12, MPI_COMM_WORLD,info)
+        call MPI_SEND(subsub_dummy(i)%hydro(1,1), subsub_nn2, subsub_mpidp, ismysink(i)-1, tag3, MPI_COMM_WORLD, info)
+        call MPI_SEND(subsub_dummy(i)%phi(1), subsub_nn0,     subsub_mpidp, ismysink(i)-1, tag4, MPI_COMM_WORLD, info)
+        
       endif
     else
       if(ismysink(i).eq.myid) then
         subsub_end = subsub_end + 1
         call subsub_allocate(subsub_obj(subsub_end))
 
-        call MPI_RECV(subsub_obj(subsub_end)%sink_ind, 1, MPI_INTEGER,  0, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%sink_id,  1, MPI_INTEGER,  0, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%sink_mass,1, subsub_mpidp, 0, tag3, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%mass_tot, 1, subsub_mpidp, 0, tag4, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%vxc,      1, subsub_mpidp, 0, tag5, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%vyc,      1, subsub_mpidp, 0, tag6, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%vzc,      1, subsub_mpidp, 0, tag7, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%clevel,   1, MPI_INTEGER,  0, tag8, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(intarr(1), 20, MPI_INTEGER,  0, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(dblarr(1), 20, subsub_mpidp, 0, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
 
-        call MPI_RECV(subsub_obj(subsub_end)%vg(1,1), subsub_nn1,    subsub_mpidp, 0, tag9, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%hydro(1,1), subsub_nn2, subsub_mpidp, 0, tag10, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%phi(1), subsub_nn0,     subsub_mpidp, 0, tag11, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-        call MPI_RECV(subsub_obj(subsub_end)%fg(1,1), subsub_nn1,    subsub_mpidp, 0, tag12, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(subsub_obj(subsub_end)%hydro(1,1), subsub_nn2, subsub_mpidp, 0, tag3, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(subsub_obj(subsub_end)%phi(1), subsub_nn0,     subsub_mpidp, 0, tag4, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+
+        subsub_obj(subsub_end)%sink_ind = intarr(1)
+        subsub_obj(subsub_end)%sink_id = intarr(2)
+        subsub_obj(subsub_end)%clevel = intarr(3)
+        subsub_obj(subsub_end)%domain = intarr(4)
+
+        subsub_obj(subsub_end)%sink_mass = dblarr(1)
+        subsub_obj(subsub_end)%mass_tot = dblarr(2) 
+        subsub_obj(subsub_end)%uold(1,:) = dblarr(3:7)
       endif
     endif
-    call MPI_BARRIER(MPI_COMM_WORLD, info)
+    !call MPI_BARRIER(MPI_COMM_WORLD, info)
   enddo
 
   !!----- Update subsub_nsink
@@ -434,92 +463,92 @@ end subroutine subsub_spread
 !################################################################
 !################################################################
 !################################################################
-subroutine subsub_sendtoanother(ind, from, to)
-  use subsub_commons
-  use amr_commons
-  use mpi_mod
-  implicit none
-
-  integer :: ind, from, to
-
-  !! Local variables
-  integer :: i, j
-  integer :: ind_send, info
-  integer :: subsub_nn0, subsub_nn1, subsub_nn2
-
-  type(subsub_type) :: subsub_dummy
-
-  integer,parameter::tag1=8421,tag2=8422,tag3=8423
-  integer,parameter::tag4=8424,tag5=8425,tag6=8426
-  integer,parameter::tag7=8427,tag8=8428,tag9=8429
-  integer,parameter::tag10=8430, tag11=8431, tag12=8432
-
-  if(myid .ne. from .and. myid .ne. to) return
-
-  call subsub_allocate(subsub_dummy)
-
-  if(myid .eq. from) then
-    do i=1, subsub_end
-      if(subsub_obj(i)%sink_ind .eq. ind) then
-        ind_send = i
-        exit
-      endif
-    enddo
-    subsub_dummy = subsub_obj(ind_send)
-  endif
-
-  subsub_nn0 = subsub_ngrid**ndim
-  subsub_nn1 = (subsub_ngrid**ndim) * ndim
-  subsub_nn2 = (subsub_ngrid**ndim) * subsub_nhydro
-  if(myid .eq. from) then
-    call MPI_SEND(subsub_dummy%sink_ind, 1, MPI_INTEGER,  to-1, tag1, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%sink_id,  1, MPI_INTEGER,  to-1, tag2, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%sink_mass,1, subsub_mpidp, to-1, tag3, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%mass_tot, 1, subsub_mpidp, to-1, tag4, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%vxc,      1, subsub_mpidp, to-1, tag5, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%vyc,      1, subsub_mpidp, to-1, tag6, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%vzc,      1, subsub_mpidp, to-1, tag7, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%clevel,   1, MPI_INTEGER,  to-1, tag8, MPI_COMM_WORLD,info)
-        
-    call MPI_SEND(subsub_dummy%vg(1,1), subsub_nn1,    subsub_mpidp, to-1, tag9, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%hydro(1,1), subsub_nn2, subsub_mpidp, to-1, tag10, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%phi(1), subsub_nn0,     subsub_mpidp, to-1, tag11, MPI_COMM_WORLD,info)
-    call MPI_SEND(subsub_dummy%fg(1,1), subsub_nn1,    subsub_mpidp, to-1, tag12, MPI_COMM_WORLD,info)
-  else
-    call MPI_RECV(subsub_dummy%sink_ind, 1, MPI_INTEGER,  from-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%sink_id,  1, MPI_INTEGER,  from-1, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%sink_mass,1, subsub_mpidp, from-1, tag3, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%mass_tot, 1, subsub_mpidp, from-1, tag4, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%vxc,      1, subsub_mpidp, from-1, tag5, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%vyc,      1, subsub_mpidp, from-1, tag6, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%vzc,      1, subsub_mpidp, from-1, tag7, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%clevel,   1, MPI_INTEGER,  from-1, tag8, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-
-    call MPI_RECV(subsub_dummy%vg(1,1), subsub_nn1,    subsub_mpidp, from-1, tag9, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%hydro(1,1), subsub_nn2, subsub_mpidp, from-1, tag10, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%phi(1), subsub_nn0,     subsub_mpidp, from-1, tag11, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-    call MPI_RECV(subsub_dummy%fg(1,1), subsub_nn1,    subsub_mpidp, from-1, tag12, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-  endif
-  
-  if(myid .eq. from) then
-    if(subsub_end .gt. 1)then
-      do i=ind_send, subsub_end-1
-        subsub_obj(i) = subsub_obj(i+1)
-      enddo
-    endif
-
-    call subsub_deallocate(subsub_obj(subsub_end))
-    subsub_end = subsub_end - 1
-  else if(myid .eq. to) then
-    subsub_end = subsub_end + 1
-
-    subsub_obj(subsub_end) = subsub_dummy
-
-    call subsub_sortbyind(subsub_obj(1:subsub_end), subsub_end)
-  endif
-  
-  call subsub_deallocate(subsub_dummy)
-end subroutine
+!subroutine subsub_sendtoanother(ind, from, to)
+!  use subsub_commons
+!  use amr_commons
+!  use mpi_mod
+!  implicit none
+!
+!  integer :: ind, from, to
+!
+!  !! Local variables
+!  integer :: i, j
+!  integer :: ind_send, info
+!  integer :: subsub_nn0, subsub_nn1, subsub_nn2
+!
+!  type(subsub_type) :: subsub_dummy
+!
+!  integer,parameter::tag1=8421,tag2=8422,tag3=8423
+!  integer,parameter::tag4=8424,tag5=8425,tag6=8426
+!  integer,parameter::tag7=8427,tag8=8428,tag9=8429
+!  integer,parameter::tag10=8430, tag11=8431, tag12=8432
+!
+!  if(myid .ne. from .and. myid .ne. to) return
+!
+!  call subsub_allocate(subsub_dummy)
+!
+!  if(myid .eq. from) then
+!    do i=1, subsub_end
+!      if(subsub_obj(i)%sink_ind .eq. ind) then
+!        ind_send = i
+!        exit
+!      endif
+!    enddo
+!    subsub_dummy = subsub_obj(ind_send)
+!  endif
+!
+!  subsub_nn0 = subsub_nn
+!  subsub_nn1 = (subsub_nn) * ndim
+!  subsub_nn2 = (subsub_nn) * subsub_nhydro
+!  if(myid .eq. from) then
+!    call MPI_SEND(subsub_dummy%sink_ind, 1, MPI_INTEGER,  to-1, tag1, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%sink_id,  1, MPI_INTEGER,  to-1, tag2, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%sink_mass,1, subsub_mpidp, to-1, tag3, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%mass_tot, 1, subsub_mpidp, to-1, tag4, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%vxc,      1, subsub_mpidp, to-1, tag5, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%vyc,      1, subsub_mpidp, to-1, tag6, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%vzc,      1, subsub_mpidp, to-1, tag7, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%clevel,   1, MPI_INTEGER,  to-1, tag8, MPI_COMM_WORLD,info)
+!        
+!    !call MPI_SEND(subsub_dummy%vg(1,1), subsub_nn1,    subsub_mpidp, to-1, tag9, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%hydro(1,1), subsub_nn2, subsub_mpidp, to-1, tag10, MPI_COMM_WORLD,info)
+!    call MPI_SEND(subsub_dummy%phi(1), subsub_nn0,     subsub_mpidp, to-1, tag11, MPI_COMM_WORLD,info)
+!    !call MPI_SEND(subsub_dummy%fg(1,1), subsub_nn1,    subsub_mpidp, to-1, tag12, MPI_COMM_WORLD,info)
+!  else
+!    call MPI_RECV(subsub_dummy%sink_ind, 1, MPI_INTEGER,  from-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%sink_id,  1, MPI_INTEGER,  from-1, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%sink_mass,1, subsub_mpidp, from-1, tag3, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%mass_tot, 1, subsub_mpidp, from-1, tag4, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%vxc,      1, subsub_mpidp, from-1, tag5, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%vyc,      1, subsub_mpidp, from-1, tag6, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%vzc,      1, subsub_mpidp, from-1, tag7, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%clevel,   1, MPI_INTEGER,  from-1, tag8, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!
+!    !call MPI_RECV(subsub_dummy%vg(1,1), subsub_nn1,    subsub_mpidp, from-1, tag9, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%hydro(1,1), subsub_nn2, subsub_mpidp, from-1, tag10, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    call MPI_RECV(subsub_dummy%phi(1), subsub_nn0,     subsub_mpidp, from-1, tag11, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!    !call MPI_RECV(subsub_dummy%fg(1,1), subsub_nn1,    subsub_mpidp, from-1, tag12, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+!  endif
+!  
+!  if(myid .eq. from) then
+!    if(subsub_end .gt. 1)then
+!      do i=ind_send, subsub_end-1
+!        subsub_obj(i) = subsub_obj(i+1)
+!      enddo
+!    endif
+!
+!    call subsub_deallocate(subsub_obj(subsub_end))
+!    subsub_end = subsub_end - 1
+!  else if(myid .eq. to) then
+!    subsub_end = subsub_end + 1
+!
+!    subsub_obj(subsub_end) = subsub_dummy
+!
+!    call subsub_sortbyind(subsub_obj(1:subsub_end), subsub_end)
+!  endif
+!  
+!  call subsub_deallocate(subsub_dummy)
+!end subroutine
 !################################################################
 !################################################################
 !################################################################
@@ -536,10 +565,14 @@ subroutine subsub_allocate(subsub_dummy)
   call subsub_deallocate(subsub_dummy)
 
 
-  allocate(subsub_dummy%vg(1:subsub_ngrid**ndim, 1:ndim))
+  !allocate(subsub_dummy%vg(1:subsub_ngrid**ndim, 1:ndim))
   allocate(subsub_dummy%hydro(1:subsub_ngrid**ndim, 1:subsub_nhydro))  ! 1 for density
   allocate(subsub_dummy%phi(1:subsub_ngrid**ndim))
-  allocate(subsub_dummy%fg(1:subsub_ngrid**ndim, 1:ndim))
+  allocate(subsub_dummy%uold(1:1, 1:subsub_nhydro))
+
+  subsub_dummy%hydro(:,:) = 0.0D0
+  subsub_dummy%phi(:) = 0.0D0
+  subsub_dummy%uold(:,:) = 0.0D0
 
 end subroutine subsub_allocate
 subroutine subsub_deallocate(subsub_dummy)
@@ -549,16 +582,14 @@ subroutine subsub_deallocate(subsub_dummy)
 
   subsub_dummy%sink_ind = 0
   subsub_dummy%sink_id = 0
-  subsub_dummy%mass_tot = 0d0
-  subsub_dummy%vxc = 0d0
-  subsub_dummy%vyc = 0d0
-  subsub_dummy%vzc = 0d0
+  subsub_dummy%sink_mass = 0.0D0
+  subsub_dummy%mass_tot = 0.0D0
   subsub_dummy%clevel = 0
+  subsub_dummy%domain = 0
      
-  if(allocated(subsub_dummy%vg)) deallocate(subsub_dummy%vg)
   if(allocated(subsub_dummy%hydro)) deallocate(subsub_dummy%hydro)
   if(allocated(subsub_dummy%phi)) deallocate(subsub_dummy%phi)
-  if(allocated(subsub_dummy%fg)) deallocate(subsub_dummy%fg)
+  if(allocated(subsub_dummy%uold)) deallocate(subsub_dummy%uold)
 
 end subroutine subsub_deallocate
 !################################################################
@@ -575,112 +606,218 @@ subroutine subsub_create(sinkind)
   !!-----
   !! This routine create subsub_obj and input the information of cell that the sink inherited
   !!-----
-  integer, intent(in) ::sinkind
+  integer, intent(in) :: sinkind
   
   
 
   !! Local Varaibles
-  type(subsub_type) :: subsub_dummy
-  integer :: i, ilevel, ind, ix, iy, iz, ncache, igrid, ngrid, nx_loc
-  real(dp):: scale
-  real(dp):: dx
+  !type(subsub_type) :: subsub_dummy
+  !integer :: i, ilevel, ind, ix, iy, iz, ncache, igrid, ngrid, nx_loc
+  !real(dp):: scale
+  !real(dp):: dx
 
   !integer,dimension(1:nvector)::ind_grid,ind_cell
-  integer ::ind_grid, ind_cell, ind_level
+  !integer ::ind_grid, ind_cell, ind_level
 
-  real(dp):: x,y,z, dxx, dyy, dzz, drr
-  integer :: dlev
-  logical :: okay
-  logical :: subsub_flag
+  !real(dp):: x,y,z, dxx, dyy, dzz, drr
+  !integer :: dlev
+  !logical :: okay
+  !logical :: subsub_flag
   real(dp),dimension(1:3)::xbound,skip_loc
   real(dp),dimension(1:twotondim,1:3)::xc
 
   !!-----
   !! Initialize
   !!-----
-  nx_loc=(icoarse_max-icoarse_min+1)
-  scale=boxlen/dble(nx_loc)
 
   !!-----
   !! Retrieve related properties from the inherited cell
   !!-----
-  subsub_flag = .false.
-  call subsub_findcell(xsink(sinkind,1)/scale, xsink(sinkind,2)/scale, xsink(sinkind,3)/scale, &
-    ind_cell, ind_grid, ind_level, subsub_flag)
-
-  if(.not. subsub_flag) return !! no matched cell in this domain
-
-
-  !! if not restart
+  !subsub_flag = .false.
+  !call subsub_findcell(xsink(sinkind,1)/scale, xsink(sinkind,2)/scale, xsink(sinkind,3)/scale, &
+  !  ind_cell, ind_grid, ind_level, subsub_flag)
+  !if(.not. subsub_flag) return !! no matched cell in this domain
 
   !!-----
   !! Initialize object
   !!-----
-  call subsub_allocate(subsub_dummy)
+  subsub_end = subsub_end + 1
 
-  dx=0.5D0**ind_level
-  subsub_dummy%sink_ind = sinkind
-  subsub_dummy%sink_id  = idsink(sinkind)
-  subsub_dummy%sink_mass = msink(sinkind)
-  subsub_dummy%mass_tot = (subsub_boxlen**ndim) * max(uold(ind_cell,1), smallr)
+  if(subsub_end .gt. size(subsub_obj)) then
+   if(myid .eq. 1) call subsub_log('subsub_object exceeds nsinkmax', 'subsub_create')
+   call clean_stop
+  endif
 
-  subsub_dummy%vxc=uold(ind_cell,2)
-  subsub_dummy%vyc=uold(ind_cell,3)
-  subsub_dummy%vzc=uold(ind_cell,4)
-  subsub_dummy%clevel=ind_level
-  
-  subsub_dummy%vg(:,1) = 0.  !! zero velocity IC for test
-  subsub_dummy%vg(:,2) = 0.
-  subsub_dummy%vg(:,3) = 0.
+  call subsub_allocate(subsub_obj(subsub_end))
 
-  subsub_dummy%hydro(:,1) =  max(uold(ind_cell,1), smallr)  !! uniform density IC
-  subsub_dummy%phi(:) = 0.
-
-  subsub_dummy%fg(:,1) = 0.
-  subsub_dummy%fg(:,2) = 0.
-  subsub_dummy%fg(:,3) = 0.
-
-  !!-----
-  !! Input to subsub_obj array
-  !!-----
-  call subsub_input(subsub_dummy)
-
-  !!-----
-  !! Deallocate
-  !!-----
-  call subsub_deallocate(subsub_dummy)
-
-
-  !!-----
-  !! DEBUG
-  !!-----
-!  skip_loc(1)=dble(icoarse_min)
-!  skip_loc(2)=dble(jcoarse_min)
-!  skip_loc(3)=dble(kcoarse_min)
-!
-!  do ilevel=levelmin,nlevelmax-1
-!    if(active(ilevel)%ngrid == 0) cycle
-!    if(ind_grid .ge. active(ilevel)%igrid(1)) dlev=ilevel
-!  enddo
-!
-!  okay=.false.
-!  do ind=1, twotondim
-!    x=(xg(ind_grid,1)+xc(ind,1)-skip_loc(1))*scale
-!    y=(xg(ind_grid,2)+xc(ind,2)-skip_loc(2))*scale
-!    z=(xg(ind_grid,3)+xc(ind,3)-skip_loc(3))*scale
-!    dxx=x-xsink(sinkind,1)
-!    dyy=y-xsink(sinkind,2)
-!    dzz=z-xsink(sinkind,3)
-!    drr=MAX(ABS(dxx), ABS(dyy), ABS(dzz))
-!
-!    if(drr .lt. 0.5d0**dlev) okay=.true.
-!  enddo
-!
-!  if(.not. okay)then
-!    write(*,*) 'no good'
-!  else
-!    write(*,*) 'good'
-!  endif
-
+  subsub_obj(subsub_end)%sink_ind = sinkind
+  subsub_obj(subsub_end)%sink_id  = idsink(sinkind)
+  subsub_obj(subsub_end)%sink_mass = msink(sinkind)
 
 end subroutine subsub_create
+!################################################################
+!################################################################
+!################################################################
+!################################################################
+subroutine subsub_updatedomain
+  !!-----
+  !! This routine updates the domain number for the sink particles and the uold of the cell hosting sink particles
+  use amr_commons
+  use subsub_commons
+  use subsub_parameters
+  use pm_commons
+  use mpi_mod
+  use hydro_commons
+  implicit none
+
+  !! Local variables
+  integer :: i, j, ismy, info, myind, myobj, nx_loc, ivar
+  integer :: ind_cell, ind_grid, ind_level
+  integer, dimension(1:nsink) :: mysink, mysink_dump
+  real(dp) :: scale
+  logical :: subsub_flag
+  integer :: tag1=9421, tag2=9422
+
+  real(dp), dimension(1:subsub_nhydro) :: dblarr
+  integer, dimension(1:1) :: intarr
+
+  integer :: ix, iy, iz
+
+  if(nsink .eq. 0) return
+
+  !! constants
+  nx_loc=(icoarse_max-icoarse_min+1)
+  scale=boxlen/dble(nx_loc)
+
+  !! find ownership
+#ifndef WITHOUTMPI
+  mysink(:) = 0
+  mysink_dump(:) = 0
+  
+  do i=1, nsink
+    ismy = -1
+    call subsub_finddomain(xsink(i,1)/scale, xsink(i,2)/scale, xsink(i,3)/scale, ismy)
+    if(ismy .gt. 0) mysink_dump(i) = myid
+  enddo
+
+  call MPI_ALLREDUCE(mysink_dump,mysink,nsink,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,info)
+#else
+  mysink(:) = myid
+#endif
+
+  !! send/recv uold
+  myind = 0
+  do i=1, nsink
+
+#ifndef WITHOUTMPI
+    myobj = mod(abs(idsink(i)), ncpu) + 1
+#else
+    myobj = 1
+#endif
+
+    if(myobj .eq. myid) then
+      myind = myind + 1
+
+      if(mysink(i) .eq. myid) then
+        subsub_flag = .false.
+        call subsub_findcell(xsink(i,1)/scale, xsink(i,2)/scale, xsink(i,3)/scale, &
+          ind_cell, ind_grid, ind_level, subsub_flag)
+
+        if(.not. subsub_flag)then
+          call subsub_log('cannot find the cell', 'subsub_updatedomain')
+          stop
+        endif
+
+
+
+        !!----- Initialize for newly allocated
+        if(subsub_obj(myind)%domain .eq. 0) then 
+          subsub_obj(myind)%hydro(:,1) = uold(ind_cell,1)
+          subsub_obj(myind)%hydro(:,2) = 0.0D0
+          subsub_obj(myind)%hydro(:,3) = 0.0D0
+          subsub_obj(myind)%hydro(:,4) = 0.0D0
+          subsub_obj(myind)%hydro(:,5) = uold(ind_cell,5)
+
+          if(subsub_dev_icsphere .eq. 1) then
+            !!----- RHEE -----
+            !! For spherical IC test
+            !!----------------
+            do ix=1, subsub_ngrid
+            do iy=1, subsub_ngrid
+            do iz=1, subsub_ngrid
+              if(ix**2 + iy**2 + iz**2 .gt. subsub_ngrid**2) subsub_obj(myind)%hydro(:,1) = 0.0D0
+            enddo
+            enddo
+            enddo
+          endif
+        endif
+
+        do ivar=1, subsub_nhydro
+          subsub_obj(myind)%uold(1,ivar) = uold(ind_cell,ivar)
+        enddo
+        subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(uold(ind_cell,1), smallr)
+        subsub_obj(myind)%clevel = ind_level
+        subsub_obj(myind)%domain = myid
+
+
+      else
+        call MPI_RECV(dblarr(1), subsub_nhydro, subsub_mpidp, mysink(i)-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(intarr(1), 1, MPI_INTEGER,  mysink(i)-1, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+
+        !!----- Initialize for newly allocated
+        if(subsub_obj(myind)%domain .eq. 0) then 
+          subsub_obj(myind)%hydro(:,1) = dblarr(1)
+          subsub_obj(myind)%hydro(:,2) = 0.0D0
+          subsub_obj(myind)%hydro(:,3) = 0.0D0
+          subsub_obj(myind)%hydro(:,4) = 0.0D0
+          subsub_obj(myind)%hydro(:,5) = dblarr(5)
+
+          if(subsub_dev_icsphere .eq. 1) then
+            !!----- RHEE -----
+            !! For spherical IC test
+            !!----------------
+            do ix=1, subsub_ngrid
+            do iy=1, subsub_ngrid
+            do iz=1, subsub_ngrid
+              if(ix**2 + iy**2 + iz**2 .gt. subsub_ngrid**2) subsub_obj(myind)%hydro(:,1) = 0.0D0
+            enddo
+            enddo
+            enddo
+          endif
+        endif
+
+        do ivar=1, subsub_nhydro
+          subsub_obj(myind)%uold(1,ivar) = dblarr(ivar)
+        enddo
+        subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(dblarr(1), smallr)
+        subsub_obj(myind)%clevel = intarr(1)
+        subsub_obj(myind)%domain = mysink(i)
+
+      endif
+    else
+      if(mysink(i) .eq. myid) then
+        subsub_flag = .false.
+        call subsub_findcell(xsink(i,1)/scale, xsink(i,2)/scale, xsink(i,3)/scale, &
+          ind_cell, ind_grid, ind_level, subsub_flag)
+
+        if(.not. subsub_flag)then
+          call subsub_log('cannot find the cell', 'subsub_updatedomain2')
+          stop
+        endif
+
+        do ivar=1, subsub_nhydro
+          dblarr(ivar) = uold(ind_cell,ivar)
+        enddo
+
+        call MPI_SEND(dblarr(1), subsub_nhydro, subsub_mpidp, myobj-1, tag1, MPI_COMM_WORLD,info)
+        call MPI_SEND(intarr(1), 1, MPI_INTEGER,  myobj-1, tag2, MPI_COMM_WORLD,info)
+      endif
+    endif
+    
+    !call MPI_BARRIER(MPI_COMM_WORLD, info)
+  enddo
+end subroutine subsub_updatedomain
+!################################################################
+!################################################################
+!################################################################
+!################################################################

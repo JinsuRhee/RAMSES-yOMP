@@ -107,13 +107,11 @@ subroutine adaptive_loop
 
   do ! Main time loop
 if(myid.eq.1) write(*,*)'%123123 nisnk = ', nsink
-if(myid.eq.1)then
-  do i=1, nsink
-    write(*,*) idsink(i)
-  enddo
-endif
+
   !!----- Debug
+if(subsub_on) then
 do i=1, ncpu
+  
   if(myid .eq. i .and. subsub_end .gt. 0) then
     write(*,*) i, subsub_end, subsub_nsink
     !do j=1, subsub_end
@@ -125,6 +123,7 @@ do i=1, ncpu
   enddo
   call MPI_BARRIER(MPI_COMM_WORLD,info)
 enddo
+endif
                                call timer('coarse levels','start')
 
 #ifndef WITHOUTMPI

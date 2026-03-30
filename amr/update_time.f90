@@ -364,11 +364,12 @@ subroutine clean_stop
   use poisson_commons
   use pm_commons
   use mpi_mod
+  use subsub_commons
   implicit none
 #ifndef WITHOUTMPI
   integer::info
 #endif
-  integer :: ilevel
+  integer :: ilevel, i
   character(LEN=80)::str
 
   call output_timer(.false., str)
@@ -456,6 +457,32 @@ subroutine clean_stop
   if(allocated(mp)) deallocate(mp)
   if(allocated(vp)) deallocate(vp)
   if(allocated(xp)) deallocate(xp)
+
+  ! SUBSUB deallocations
+  if(subsub_on) then
+    if(allocated(subsub_phi)) deallocate(subsub_phi)
+    if(allocated(subsub_fg)) deallocate(subsub_fg)
+    if(allocated(subsub_rho_old)) deallocate(subsub_rho_old)
+    if(allocated(subsub_vg_old)) deallocate(subsub_vg_old)
+    !if(allocated(subsub_vg_up)) deallocate(subsub_vg_up)
+    !if(allocated(subsub_vg_down)) deallocate(subsub_vg_down)
+    !if(allocated(subsub_flux_up)) deallocate(subsub_flux_up)
+    !if(allocated(subsub_flux_down)) deallocate(subsub_flux_down)
+  
+    if(allocated(subsub_cgrhs)) deallocate(subsub_cgrhs)
+    if(allocated(subsub_cgLphi)) deallocate(subsub_cgLphi)
+    if(allocated(subsub_cgRes)) deallocate(subsub_cgRes)
+    if(allocated(subsub_cgp)) deallocate(subsub_cgp)
+    if(allocated(subsub_cgLp)) deallocate(subsub_cgLp)
+    if(allocated(subsub_dd2)) deallocate(subsub_dd2)
+
+    if(subsub_end .ge. 1) then
+      do i=1, subsub_end
+        call subsub_deallocate(subsub_obj(i))
+      enddo
+      deallocate(subsub_obj)
+    endif
+  endif
 
   stop
 end subroutine clean_stop

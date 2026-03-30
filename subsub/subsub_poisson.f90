@@ -12,29 +12,31 @@ subroutine subsub_computefine(ind, delMgas, delMBH)
   use amr_commons
   use pm_commons
   use hydro_commons
+  use mpi_mod
   implicit none
   integer :: ind
   real(dp) :: delMgas, delMBH
 
   !!----- Local Variables
   integer :: i
-  integer :: subsub_nn, subsub_step
+  integer :: subsub_step, subsub_nstep
   
-  real(dp) :: subsub_dt, subsub_t0, subsub_dtmax, subsub_dx, subsub_maxv
+  real(dp) :: subsub_dt, subsub_t0, subsub_dtmax, subsub_maxv
   real(dp), dimension(1:2,1:ndim) :: bc_vv, bc_flux
   real(dp), dimension(1:10) :: varr
   real(dp) :: m_in, m_out
   real(dp) :: rho_ave, tff, vff
   real(dp) :: delMtot
 
-  real(dp)::scale_nH,scale_T2,scale_l,scale_d,scale_t,scale_v
-  real(dp)::threepi2, fourpi
+  real(dp) :: scale_nH,scale_T2,scale_l,scale_d,scale_t,scale_v
+  real(dp) :: threepi2, fourpi
+
+  real(dp) :: tcheck(1:10)
+
   !! Constant
   call units(scale_l,scale_t,scale_d,scale_v,scale_nH,scale_T2)
   threepi2=3.0d0*ACOS(-1.0d0)**2
   fourpi=4d0*acos(-1d0)
-
-  subsub_nn = subsub_ngrid**ndim
 
   !! Check inflow/outflow type
   delMtot = delMgas + delMBH
@@ -47,10 +49,16 @@ subroutine subsub_computefine(ind, delMgas, delMBH)
   endif
 
 
-  !! BC for inflow
+  !!-----
+  !! Set BC
+  !!-----
+  bc_vv(:,:) = 0.0D0
+  bc_flux(:,:) = 0.0D0
+
+  !!-----for inflow
   if(m_in .gt. 0) then
     if(subsub_inflowtype .eq. 1)then !! spherical inflow by free-fall
-      rho_ave = subsub_obj(ind)%mass_tot + msink(subsub_obj(ind)%sink_ind)
+      rho_ave = subsub_obj(ind)%mass_tot! + msink(subsub_obj(ind)%sink_ind)
       rho_ave = rho_ave / subsub_boxlen**ndim
       tff = sqrt(threepi2/8./fourpi/rho_ave/(6.67d-8*scale_d*scale_t**2))
       vff = subsub_boxlen/tff
@@ -69,433 +77,916 @@ subroutine subsub_computefine(ind, delMgas, delMBH)
   endif
 
 
-  !!----- Find dt based on CFL condition
+  !!----- 
   subsub_t0 = 0.0D0
+  subsub_nstep = 0
 
   !!----- Start Subcycle
   subsub_dt = dtold(levelmin)
-  do
-    !!----- Find dt by CFL
-    varr(:) = 0.0D0
-    varr(1) = maxval(subsub_obj(ind)%vg)
-    varr(2) = maxval(bc_vv)
-   
-    call subsub_finddt(subsub_dt, dtold(levelmin), varr)
-
-    !!----- Compute Phi
-    call subsub_poissionnew(ind)
-
-    !!----- Compute Force
-    call subsub_forcenew(ind)
-
-    !!----- Compute Velocity 
-    call subsub_vnew(ind, subsub_dt)
-
-    !!----- Compute Density (Poission + Continuity)
-    call subsub_dnew(ind, subsub_dt, subsub_dx, bc_vv, bc_flux)
 
 
-    subsub_t0 = subsub_t0 + subsub_dt 
+  !!----- By Conjugrate-Gradient & KDK
+  call subsub_cgkdk(ind, bc_vv, bc_flux)
 
-    !!----- Total mass update
-    subsub_obj(ind)%mass_tot = sum(subsub_obj(ind)%hydro(:,1)) * (subsub_boxlen/subsub_ngrid)**ndim
-    if(subsub_t0 .ge. dtold(levelmin)) exit
-  enddo
 
 end subroutine subsub_computefine
 !################################################################
 !################################################################
 !################################################################
 !################################################################
-subroutine subsub_dnew(objind, subsub_dt, subsub_dx, bc_vv, bc_flux)
+subroutine subsub_cgkdk(objind, bc_vv, bc_flux)
+  !!----- CG
+  !! Ax = b
+  !! r_n = Ax_n - b
+  !! alpha = [ (r_n)^T r_n ] / [ (x_n)^T Ax_n]
+  !! x_n+1 = x_n + alpha * r_n
+  !! r_n+1 = r_n - alpha * Ap_n
+  !! beta = [ (r_n+1)^T r_n+1 ] / [ (r_n)^T r_n]
+  !! p_n+1 = r_n+1 + beta * p_n
+  !!
+  !!
+  !! x_0 = subsub_obj(objind)%phi (initial guess)
+  !! x_n = subsub_phi
+  !! r_n = subsub_cgRes
+  !! p_n = subsub_cgP
+  !!------
+
+  !!----- RHEE -----
+  !! Do we need to update mass_tot after the first kick?
+  !!----------------
   use subsub_commons
-  use subsub_parameters
   use amr_commons
+  use cooling_module, ONLY:twopi
+  use mpi_mod
   implicit none
   integer :: objind
-  real(dp) :: subsub_dt, subsub_dx
   real(dp), dimension(1:2,1:ndim) :: bc_vv, bc_flux
 
   !! Local variables
-  integer :: i, ii, ix, iy, iz, subsub_nn
-  real(dp) :: bc_vx_up, bc_vx_down
-  real(dp) :: bc_vy_up, bc_vy_down
-  real(dp) :: bc_vz_up, bc_vz_down
-  real(dp) :: bc_fx_up, bc_fx_down
-  real(dp) :: bc_fy_up, bc_fy_down
-  real(dp) :: bc_fz_up, bc_fz_down
-  real(dp) :: subsub_delta
+  integer:: i, iter
+  integer :: ii, ix, iy, iz
+  integer :: xu, xd, yu, yd, zu, zd
+  real(dp) :: mpinow
+  real(dp) :: maxv, maxv_local
+  logical :: isexit
 
-  real(dp), dimension(:), allocatable :: rho_old
-  real(dp), dimension(:,:), allocatable :: vg_old
-  real(dp), dimension(:,:), allocatable :: vg_up, vg_down
-  real(dp), dimension(:,:), allocatable :: flux_up, flux_down
+  real(dp) :: subsub_dt, subsub_t0, subsub_dtmax
+  integer :: subsub_nstep, subsub_ngrid2
+  logical :: okay, skip_cg
+  real(dp) :: rx, ry, rz
 
-  subsub_nn = subsub_ngrid**ndim
+  real(dp) :: gconst, mtot, fourpiG, fact1
+  real(dp) ::scale_nH,scale_T2,scale_l,scale_d,scale_t,scale_v
 
-  !!----- Allocate
-  allocate(rho_old(1:subsub_nn))
-  allocate(vg_old(1:subsub_nn,1:ndim))
-  allocate(vg_up(1:subsub_nn,1:ndim))
-  allocate(vg_down(1:subsub_nn,1:ndim))
-  allocate(flux_up(1:subsub_nn,1:ndim))
-  allocate(flux_down(1:subsub_nn,1:ndim))
+  !!CG
+  real(dp) :: alpha, beta
+  real(dp) :: rhs2, rr_old, rr_new, dx2inv, pLp, relres
 
-  !!----- Save Old
-  rho_old(:) = subsub_obj(objind)%hydro(:,1)
-  do i=1, ndim
-    vg_old(:,i) = subsub_obj(objind)%vg(:,i)
-  enddo
-
-  bc_vx_up = bc_vv(2,1)
-  bc_vy_up = bc_vv(2,2)
-  bc_vz_up = bc_vv(2,3)
-  bc_vx_down = bc_vv(1,1)
-  bc_vy_down = bc_vv(1,2)
-  bc_vz_down = bc_vv(1,3)
-
-  bc_fx_up = bc_flux(2,1)
-  bc_fy_up = bc_flux(2,2)
-  bc_fz_up = bc_flux(2,3)
-  bc_fx_down = bc_flux(1,1)
-  bc_fy_down = bc_flux(1,2)
-  bc_fz_down = bc_flux(1,3)
+  !!UPWIND
+  real(dp), dimension(1:2, 1:ndim) :: vgdummy, fluxdummy
+  real(dp) :: deltarho
 
   !!-----
-  !! 1/2 Velocity
+  !! constants
   !!-----
+  subsub_dt = dtold(levelmin)
+  subsub_t0 = 0.0D0
+  subsub_nstep = 0
+
+  subsub_ncheck_cg(:) = 0
+  subsub_tcheck_cg(:) = 0.0D0
+    ! (1) - Poisson
+    ! (2) - Force
+    ! (3) - DT
+    ! (4) - Kick
+    ! (5) - Drift
+  subsub_ngrid2 = subsub_ngrid**2
+  dx2inv = 1.0D0 / (subsub_dx**2)
+
+  call units(scale_l,scale_t,scale_d,scale_v,scale_nH,scale_T2)
+  gconst = 6.67d-8*scale_d*scale_t**2
+
+  mtot = subsub_obj(objind)%mass_tot
+  fact1 = -gconst * mtot
+  fourpiG = gconst * 2.0D0 * twopi
+
+
+
+  isexit = .false.
+  !!----- Main Iteration loop for the time loop
+  !$omp parallel &
+  !$omp private(i, ix, iy, iz, ii, rx, ry, rz, okay) &
+  !$omp private(xu, xd, yu, yd, zu, zd, iter) &
+  !$omp private(vgdummy, fluxdummy, deltarho)
+
+  !! Main Time loop
   
-  !$omp parallel default(shared) private(i, ix, iy, iz, ii, subsub_delta)
+  do
+    if(isexit) exit
+#ifndef WITHOUTMPI
+    !$omp single
+    mpinow = MPI_WTIME()
+    !$omp end single
+#endif
 
-  !$omp do
-  do i=1, subsub_nn
-    call subsub_get3ind(i, ix, iy, iz)
+    !!!! Initial guess from the old potential
+    !$omp single
+    subsub_phi(:) = subsub_obj(objind)%phi(:)
+    !$omp end single
 
+    !!-----
+    !! Compute Phi by CG
+    !!-----
 
-    !! X velocity
-    if(ix.ne.subsub_ngrid) then
-      call subsub_iget3ind(ii, ix+1, iy, iz)
-      vg_up(i,1) = (vg_old(ii,1) + vg_old(i,1))/2.0D0
-    else
-      vg_up(i,1) = bc_vx_up
-    endif
+    !!!! Fix the boundary potential
+    !$omp do collapse(3)
+    do ix=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+    do iz=1, subsub_ngrid
+      if(ix.eq.1 .or. ix .eq. subsub_ngrid .or. &
+         iy.eq.1 .or. iy .eq. subsub_ngrid .or. &
+         iz.eq.1 .or. iz .eq. subsub_ngrid) then
+        ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
 
-    if(ix.ne.1) then
-      call subsub_iget3ind(ii, ix-1, iy, iz)
-      vg_down(i,1) = (vg_old(ii,1) + vg_old(i,1))/2.0D0
-    else
-      vg_down(i,1) = bc_vx_down
-    endif
+        subsub_phi(ii) = fact1 / sqrt(subsub_dd2(ii) + subsub_poisson_softening**2)
 
-    !! Y velocity
-    if(iy.ne.subsub_ngrid) then
-      call subsub_iget3ind(ii, ix, iy+1, iz)
-      vg_up(i,2) = (vg_old(ii,2) + vg_old(i,2))/2.0D0
-    else
-      vg_up(i,2) = bc_vy_up
-    endif
-
-    if(iy.ne.1) then
-      call subsub_iget3ind(ii, ix, iy-1, iz)
-      vg_down(i,2) = (vg_old(ii,2) + vg_old(i,2))/2.0D0
-    else
-      vg_down(i,2) = bc_vy_down
-    endif
-
-    !! Z velocity
-    if(iz.ne.subsub_ngrid) then
-      call subsub_iget3ind(ii, ix, iy, iz+1)
-      vg_up(i,3) = (vg_old(ii,3) + vg_old(i,3))/2.0D0
-    else
-      vg_up(i,3) = bc_vz_up
-    endif
-
-    if(iz.ne.1) then
-      call subsub_iget3ind(ii, ix, iy, iz-1)
-      vg_down(i,3) = (vg_old(ii,3) + vg_old(i,3))/2.0D0
-    else
-      vg_down(i,3) = bc_vz_down
-    endif
-  enddo
-  !$omp end do
-
-  !!-----
-  !! 1/2 Flux (by UPWIND)
-  !!-----
-  !$omp do
-  do i=1, subsub_nn
-    call subsub_get3ind(i, ix, iy, iz)
-
-    !! X UP
-    if(vg_up(i,1) .GT. 0) then
-      flux_up(i,1) = rho_old(i)*vg_up(i,1)
-    else
-      if(ix.ne.subsub_ngrid)then
-        call subsub_iget3ind(ii, ix+1, iy, iz)
-        flux_up(i,1) = rho_old(ii)*vg_up(i,1)
-      else
-        flux_up(i,1) = bc_fx_up
+        !! copy to the old phi array
+        !subsub_obj(objind)%phi(ii) = subsub_phi(ii)
       endif
-    endif
+    enddo
+    enddo
+    enddo
+    !$omp end do
 
-    !! X DOWN
-    if(vg_down(i,1) .LT. 0) then
-      flux_down(i,1) = rho_old(i)*vg_down(i,1)
-    else
-      if(ix.ne.1)then
-        call subsub_iget3ind(ii, ix-1, iy, iz)
-        flux_down(i,1) = rho_old(ii)*vg_down(i,1)
-      else
-        flux_down(i,1) = bc_fx_down
+    !!!! Initialize CG arrays
+    !$omp single
+    !subsub_cgrhs(:) = 0.0D0
+    !subsub_cgLphi(:) = 0.0D0
+    !subsub_cgRes(:) = 0.0D0
+    !subsub_cgp(:) = 0.0D0
+    !subsub_cgLp(:) = 0.0D0
+    skip_cg = .false.
+    !subsub_fg(:,:) = 0.0D0
+    rhs2 = 0.0D0
+    rr_old = 0.0D0
+    !$omp end single
+
+    !!!! Build Initial CG arrays
+    !$omp do collapse(3) reduction(+:rhs2, rr_old)
+    do ix=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+    do iz=1, subsub_ngrid
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      !! Zero BC
+      if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+         iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+         iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+        subsub_cgrhs(ii) = 0.0D0
+        subsub_cgLphi(ii) = 0.0D0
+        subsub_cgRes(ii) = 0.0D0
+        subsub_cgp(ii) = 0.0D0
+        cycle
       endif
-    endif
 
-    !! Y UP
-    if(vg_up(i,2) .GT. 0) then
-      flux_up(i,2) = rho_old(i)*vg_up(i,2)
-    else
-      if(iy.ne.subsub_ngrid)then
-        call subsub_iget3ind(ii, ix, iy+1, iz)
-        flux_up(i,2) = rho_old(ii)*vg_up(i,2)
+      subsub_cgrhs(ii) = -fourpiG * subsub_obj(objind)%hydro(ii,1)
+
+      rhs2 = rhs2 + subsub_cgrhs(ii)*subsub_cgrhs(ii)
+
+      xu = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix+1
+      xd = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix-1
+      yu = (iz-1)*subsub_ngrid2 + (iy  )*subsub_ngrid + ix
+      yd = (iz-1)*subsub_ngrid2 + (iy-2)*subsub_ngrid + ix
+      zu = (iz  )*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      zd = (iz-2)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      subsub_cgLphi(ii) = (&
+        6.0D0*subsub_phi(ii) - subsub_phi(xu) - subsub_phi(xd) &
+        - subsub_phi(yu) - subsub_phi(yd) - subsub_phi(zu) - subsub_phi(zd) ) * dx2inv
+
+      subsub_cgRes(ii) = subsub_cgrhs(ii) - subsub_cgLphi(ii)
+      subsub_cgp(ii) = subsub_cgRes(ii)
+      rr_old = rr_old + subsub_cgRes(ii)*subsub_cgRes(ii)
+    enddo
+    enddo
+    enddo
+    !$omp end do
+
+    !$omp single
+    if(sqrt(rr_old / max(rhs2, subsub_smallr)) .le. subsub_poisson_tolerance) then
+      skip_cg = .true.
+    endif
+    !$omp end single
+
+
+    !!!! CG Loop
+    do iter=1, subsub_poisson_niter
+      if(skip_cg) exit
+
+      !$omp single
+      pLp = 0.0D0
+      rr_new = 0.0D0
+      subsub_ncheck_cg(2) = subsub_ncheck_cg(2) + 1
+      !$omp end single
+
+      !!!!!! Compute Lp & pLp
+      !$omp do collapse(3) reduction(+:pLp)
+      do ix=1, subsub_ngrid
+      do iy=1, subsub_ngrid
+      do iz=1, subsub_ngrid
+        ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        !! Zero BC
+        if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+           iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+           iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+          subsub_cgLp(ii) = 0.0D0
+          cycle
+        endif
+
+        xu = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix+1
+        xd = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix-1
+        yu = (iz-1)*subsub_ngrid2 + (iy  )*subsub_ngrid + ix
+        yd = (iz-1)*subsub_ngrid2 + (iy-2)*subsub_ngrid + ix
+        zu = (iz  )*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+        zd = (iz-2)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        subsub_cgLp(ii) = (&
+          6.0D0*subsub_cgp(ii) - subsub_cgp(xu) - subsub_cgp(xd) &
+          - subsub_cgp(yu) - subsub_cgp(yd) - subsub_cgp(zu) - subsub_cgp(zd) )  * dx2inv
+
+        pLp = pLp + subsub_cgp(ii) * subsub_cgLp(ii)
+
+      enddo
+      enddo
+      enddo
+      !$omp end do
+
+      !$omp single
+      if(abs(pLp) .lt. subsub_smallr) then
+        skip_cg = .true.
+        alpha = 0.0D0
       else
-        flux_up(i,2) = bc_fy_up
+        alpha = rr_old / pLp
       endif
-    endif
+      !$omp end single
 
-    !! Y DOWN
-    if(vg_down(i,2) .LT. 0) then
-      flux_down(i,2) = rho_old(i)*vg_down(i,2)
-    else
-      if(iy.ne.1)then
-        call subsub_iget3ind(ii, ix, iy-1, iz)
-        flux_down(i,2) = rho_old(ii)*vg_down(i,2)
+      !!!!!! Update
+      !$omp do collapse(3) reduction(+:rr_new)
+      do ix=1, subsub_ngrid
+      do iy=1, subsub_ngrid
+      do iz=1, subsub_ngrid
+        ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        subsub_cgRes(ii) = subsub_cgRes(ii) - alpha*subsub_cgLp(ii)
+
+        !! BC
+        if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+           iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+           iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+
+          subsub_phi(ii) = fact1 / sqrt(subsub_dd2(ii) + subsub_poisson_softening**2)
+          cycle
+        endif
+
+
+        rr_new = rr_new + subsub_cgRes(ii) * subsub_cgRes(ii)
+        subsub_phi(ii) = subsub_phi(ii) + alpha * subsub_cgp(ii)
+      enddo
+      enddo
+      enddo
+      !$omp end do
+
+      !$omp single
+      relres = sqrt(rr_new / max(rhs2, subsub_smallr))
+      if(relres .lt. subsub_poisson_tolerance) skip_cg = .true.
+      beta = rr_new / max(rr_old, subsub_smallr)
+      !$omp end single
+
+      !! Update2
+      !$omp do collapse(3)
+      do ix=1, subsub_ngrid
+      do iy=1, subsub_ngrid
+      do iz=1, subsub_ngrid
+        ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        !! Zero BC
+        if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+           iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+           iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+          subsub_cgp(ii) = 0.0D0
+          cycle
+        endif
+
+        subsub_cgp(ii) = subsub_cgRes(ii) + beta * subsub_cgp(ii)
+      enddo
+      enddo
+      enddo
+      !$omp end do
+
+      !$omp single
+      rr_old = rr_new
+      !$omp end single
+    enddo !! CG Iteration loop
+
+    !$omp barrier
+
+#ifndef WITHOUTMPI
+    !$omp single
+    subsub_tcheck_cg(1) = subsub_tcheck_cg(1) + MPI_WTIME() - mpinow
+    mpinow = MPI_WTIME()
+    !$omp end single
+#endif
+
+
+    !!-----
+    !! Compute g from phi
+    !!-----
+    !$omp do collapse(3)
+    do ix=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+    do iz=1, subsub_ngrid
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      xu = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix+1
+      xd = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix-1
+      yu = (iz-1)*subsub_ngrid2 + (iy  )*subsub_ngrid + ix
+      yd = (iz-1)*subsub_ngrid2 + (iy-2)*subsub_ngrid + ix
+      zu = (iz  )*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      zd = (iz-2)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      if(ix.eq.1) then
+        subsub_fg(ii,1) = - (subsub_phi(xu) - subsub_phi(ii)) / subsub_dx
+      else if(ix .eq. subsub_ngrid) then
+        subsub_fg(ii,1) = - (subsub_phi(ii) - subsub_phi(xd)) / subsub_dx
       else
-        flux_down(i,2) = bc_fy_down
+        subsub_fg(ii,1) = - (subsub_phi(xu) - subsub_phi(xd)) / (2.0D0*subsub_dx)
       endif
-    endif
 
-    !! Z UP
-    if(vg_up(i,3) .GT. 0) then
-      flux_up(i,3) = rho_old(i)*vg_up(i,3)
-    else
-      if(iz.ne.subsub_ngrid)then
-        call subsub_iget3ind(ii, ix, iy, iz+1)
-        flux_up(i,3) = rho_old(ii)*vg_up(i,3)
+      if(iy.eq.1) then
+        subsub_fg(ii,2) = - (subsub_phi(yu) - subsub_phi(ii)) / subsub_dx
+      else if(iy .eq. subsub_ngrid) then
+        subsub_fg(ii,2) = - (subsub_phi(ii) - subsub_phi(yd)) / subsub_dx
       else
-        flux_up(i,3) = bc_fz_up
+        subsub_fg(ii,2) = - (subsub_phi(yu) - subsub_phi(yd)) / (2.0D0*subsub_dx)
       endif
-    endif
 
-    !! Z DOWN
-    if(vg_down(i,3) .LT. 0) then
-      flux_down(i,3) = rho_old(i)*vg_down(i,3)
-    else
-      if(iz.ne.1)then
-        call subsub_iget3ind(ii, ix, iy, iz-1)
-        flux_down(i,3) = rho_old(ii)*vg_down(i,3)
+      if(iz.eq.1) then
+        subsub_fg(ii,3) = - (subsub_phi(zu) - subsub_phi(ii)) / subsub_dx
+      else if(iz .eq. subsub_ngrid) then
+        subsub_fg(ii,3) = - (subsub_phi(ii) - subsub_phi(zd)) / subsub_dx
       else
-        flux_down(i,3) = bc_fz_down
+        subsub_fg(ii,3) = - (subsub_phi(zu) - subsub_phi(zd)) / (2.0D0*subsub_dx)
       endif
+    enddo
+    enddo
+    enddo
+    !$omp end do
+
+    !$omp barrier
+
+#ifndef WITHOUTMPI
+    !$omp single
+    subsub_tcheck_cg(2) = subsub_tcheck_cg(2) + MPI_WTIME() - mpinow
+    mpinow = MPI_WTIME()
+    !$omp end single
+#endif
+
+
+    !!-----
+    !! Compute dt based on velocity
+    !!-----
+    !$omp do
+    do i=1, subsub_nn
+      subsub_vg_old(i,1) = subsub_obj(objind)%hydro(i,2) / subsub_obj(objind)%hydro(i,1)
+      subsub_vg_old(i,2) = subsub_obj(objind)%hydro(i,3) / subsub_obj(objind)%hydro(i,1)
+      subsub_vg_old(i,3) = subsub_obj(objind)%hydro(i,4) / subsub_obj(objind)%hydro(i,1)
+    enddo
+    !$omp end do
+
+
+    !$omp single
+    maxv = maxval(abs(bc_vv))
+    maxv_local = 0.0D0
+    !$omp end single
+  
+  
+    !$omp do reduction(max:maxv_local)
+    do i=1, subsub_nn
+      if(abs(subsub_vg_old(i,1)) .ge. maxv_local) then
+        maxv_local = abs(subsub_vg_old(i,1))
+      endif
+  
+      if(abs(subsub_vg_old(i,2)) .ge. maxv_local) then
+        maxv_local = abs(subsub_vg_old(i,2))
+      endif
+  
+      if(abs(subsub_vg_old(i,3)) .ge. maxv_local) then
+        maxv_local = abs(subsub_vg_old(i,3))
+      endif
+    enddo
+    !$omp end do
+  
+    !$omp single
+    maxv = max(maxv, maxv_local)
+
+    if(maxv .lt. subsub_smallr) then
+      subsub_dtmax = dtold(levelmin) - subsub_t0
+    else
+      subsub_dtmax = subsub_cfl * (subsub_dx / maxv)
     endif
-  enddo
-  !$omp end do
+  
+    do
+      if(subsub_dt .lt. subsub_dtmax) exit
+      subsub_dt = subsub_dt * 0.5D0
+    enddo
+    subsub_dt = min(subsub_dt, dtold(levelmin) - subsub_t0)
+    !$omp end single
 
-  !!-----
-  !! Update density
-  !!-----
-  !$omp do
-  do i=1, subsub_nn
-    call subsub_get3ind(i, ix, iy, iz)
+#ifndef WITHOUTMPI
+    !$omp single
+    subsub_tcheck_cg(3) = subsub_tcheck_cg(3) + MPI_WTIME() - mpinow
+    mpinow = MPI_WTIME()
+    !$omp end single
+#endif
 
-    subsub_delta = flux_up(i,1) - flux_down(i,1) + &
-      flux_up(i,2) - flux_down(i,2) + &
-      flux_up(i,3) - flux_down(i,3)
+    !$omp barrier
 
-    subsub_delta = subsub_delta * subsub_dt / subsub_dx
+    !!-----
+    !! Kick: Velocity update by 1/2
+    !!-----
+    !$omp do
+    do i=1, subsub_nn
+      subsub_vg_old(i,1) = subsub_vg_old(i,1) + subsub_fg(i,1) * (subsub_dt/2.0D0)
+      subsub_vg_old(i,2) = subsub_vg_old(i,2) + subsub_fg(i,2) * (subsub_dt/2.0D0)
+      subsub_vg_old(i,3) = subsub_vg_old(i,3) + subsub_fg(i,3) * (subsub_dt/2.0D0)
+      !subsub_obj(objind)%hydro(i,2) = subsub_obj(objind)%hydro(i,2) + &
+      !  subsub_fg(i,1) * (subsub_dt/2.0D0) * subsub_obj(objind)%hydro(i,1)
+      !subsub_obj(objind)%hydro(i,3) = subsub_obj(objind)%hydro(i,3) + &
+      !  subsub_fg(i,2) * (subsub_dt/2.0D0) * subsub_obj(objind)%hydro(i,1)
+      !subsub_obj(objind)%hydro(i,4) = subsub_obj(objind)%hydro(i,4) + &
+      !  subsub_fg(i,3) * (subsub_dt/2.0D0) * subsub_obj(objind)%hydro(i,1)
+    enddo
+    !$omp end do
 
-    subsub_obj(objind)%hydro(i,1) = max(rho_old(i) - subsub_delta, subsub_densityfloor)
-  enddo
-  !$omp end do
+    !$omp barrier
 
+#ifndef WITHOUTMPI
+    !$omp single
+    subsub_tcheck_cg(4) = subsub_tcheck_cg(4) + MPI_WTIME() - mpinow
+    mpinow = MPI_WTIME()
+    !$omp end single
+#endif
+
+
+    !!-----
+    !! Drift: Rho update by 1
+    !!-----
+
+    !! vgdummy, fluxdummy : (1:2,:) down , up
+    !!                      (:, 1:3) x, y, z
+    !$omp single
+    subsub_rho_old(:) = subsub_obj(objind)%hydro(:,1)
+    !$omp end single
+
+    !$omp do collapse(3)
+    do ix=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+    do iz=1, subsub_ngrid
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      xu = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix+1
+      xd = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix-1
+      yu = (iz-1)*subsub_ngrid2 + (iy  )*subsub_ngrid + ix
+      yd = (iz-1)*subsub_ngrid2 + (iy-2)*subsub_ngrid + ix
+      zu = (iz  )*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      zd = (iz-2)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      !! X
+      if(ix .ne. subsub_ngrid) then
+        vgdummy(2,1) =  (subsub_vg_old(xu,1) + subsub_vg_old(ii,1)) / 2.0D0
+      else
+        vgdummy(2,1) = bc_vv(2,1)
+      endif
+
+      if(ix .ne. 1) then
+        vgdummy(1,1) = (subsub_vg_old(xd,1) + subsub_vg_old(ii,1)) / 2.0D0
+      else
+        vgdummy(1,1) = bc_vv(1,1)
+      endif
+
+      !! Y velocity
+      if(iy .ne. subsub_ngrid) then
+        vgdummy(2,2) =  (subsub_vg_old(yu,2) + subsub_vg_old(ii,2)) / 2.0D0
+      else
+        vgdummy(2,2) = bc_vv(2,2)
+      endif
+
+      if(iy .ne. 1) then
+        vgdummy(1,2) = (subsub_vg_old(yd,2) + subsub_vg_old(ii,2)) / 2.0D0
+      else
+        vgdummy(1,2) = bc_vv(1,2)
+      endif
+
+      !! Z velocity
+      if(iz .ne. subsub_ngrid) then
+        vgdummy(2,3) =  (subsub_vg_old(zu,3) + subsub_vg_old(ii,3)) / 2.0D0
+      else
+        vgdummy(2,3) = bc_vv(2,3)
+      endif
+
+      if(iz .ne. 1) then
+        vgdummy(1,3) = (subsub_vg_old(zd,3) + subsub_vg_old(ii,3)) / 2.0D0
+      else
+        vgdummy(1,3) = bc_vv(1,3)
+      endif
+
+      !! Flux update (X-up)
+      if(vgdummy(2,1) .gt. 0) then
+        fluxdummy(2,1) = subsub_obj(objind)%hydro(ii,1)*vgdummy(2,1)
+      else
+        if(ix .ne. subsub_ngrid) then
+          fluxdummy(2,1) = subsub_obj(objind)%hydro(xu,1)*vgdummy(2,1)
+        else
+          fluxdummy(2,1) = bc_flux(2,1)
+        endif
+      endif
+
+      !! (X-down)
+      if(vgdummy(1,1) .lt. 0) then
+        fluxdummy(1,1) = subsub_obj(objind)%hydro(ii,1)*vgdummy(1,1)
+      else
+        if(ix .ne. 1) then
+          fluxdummy(1,1) = subsub_obj(objind)%hydro(xd,1)*vgdummy(1,1)
+        else
+          fluxdummy(1,1) = bc_flux(1,1)
+        endif
+      endif
+
+      !! Flux update (Y-up)
+      if(vgdummy(2,2) .gt. 0) then
+        fluxdummy(2,2) = subsub_obj(objind)%hydro(ii,1)*vgdummy(2,2)
+      else
+        if(iy .ne. subsub_ngrid) then
+          fluxdummy(2,2) = subsub_obj(objind)%hydro(yu,1)*vgdummy(2,2)
+        else
+          fluxdummy(2,2) = bc_flux(2,2)
+        endif
+      endif
+
+      !! (Y-down)
+      if(vgdummy(1,2) .lt. 0) then
+        fluxdummy(1,2) = subsub_obj(objind)%hydro(ii,1)*vgdummy(1,2)
+      else
+        if(iy .ne. 1) then
+          fluxdummy(1,2) = subsub_obj(objind)%hydro(yd,1)*vgdummy(1,2)
+        else
+          fluxdummy(1,2) = bc_flux(1,2)
+        endif
+      endif
+
+      !! Flux update (Z-up)
+      if(vgdummy(2,3) .gt. 0) then
+        fluxdummy(2,3) = subsub_obj(objind)%hydro(ii,1)*vgdummy(2,3)
+      else
+        if(iz .ne. subsub_ngrid) then
+          fluxdummy(2,3) = subsub_obj(objind)%hydro(zu,1)*vgdummy(2,3)
+        else
+          fluxdummy(2,3) = bc_flux(2,3)
+        endif
+      endif
+
+      !! (Z-down)
+      if(vgdummy(1,3) .lt. 0) then
+        fluxdummy(1,3) = subsub_obj(objind)%hydro(ii,1)*vgdummy(1,3)
+      else
+        if(iz .ne. 1) then
+          fluxdummy(1,3) = subsub_obj(objind)%hydro(zd,1)*vgdummy(1,3)
+        else
+          fluxdummy(1,3) = bc_flux(1,3)
+        endif
+      endif
+
+      !! (update density)
+      deltarho = fluxdummy(2,1) - fluxdummy(1,1) + &
+        fluxdummy(2,2) - fluxdummy(1,2) + &
+        fluxdummy(2,3) - fluxdummy(1,3)
+
+      deltarho = deltarho * subsub_dt / subsub_dx
+
+      subsub_rho_old(ii) = max(subsub_rho_old(ii) - deltarho, subsub_densityfloor)
+    enddo
+    enddo
+    enddo
+    !$omp end do
+
+    !$omp barrier
+
+    !$omp single
+    subsub_obj(objind)%hydro(:,1) = subsub_rho_old(:)
+ 
+#ifndef WITHOUTMPI
+    subsub_tcheck_cg(5) = subsub_tcheck_cg(5) + MPI_WTIME() - mpinow
+    mpinow = MPI_WTIME()
+#endif
+    !$omp end single
+
+
+
+    !!-----
+    !! Poisson by the updated density
+    !!-----
+    !!!! Fix the boundary potential
+    
+    !$omp do collapse(3)
+    do ix=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+    do iz=1, subsub_ngrid
+      if(ix.eq.1 .or. ix .eq. subsub_ngrid .or. &
+         iy.eq.1 .or. iy .eq. subsub_ngrid .or. &
+         iz.eq.1 .or. iz .eq. subsub_ngrid) then
+        ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        subsub_phi(ii) = fact1 / sqrt(subsub_dd2(ii) + subsub_poisson_softening**2)
+
+        !! copy to the old phi array
+        !subsub_obj(objind)%phi(ii) = subsub_phi(ii)
+      endif
+    enddo
+    enddo
+    enddo
+    !$omp end do
+
+    !!!! Initialize CG arrays
+    !$omp single
+    !subsub_cgrhs(:) = 0.0D0
+    !subsub_cgLphi(:) = 0.0D0
+    !subsub_cgRes(:) = 0.0D0
+    !subsub_cgp(:) = 0.0D0
+    !subsub_cgLp(:) = 0.0D0
+    !subsub_fg(:,:) = 0.0D0
+    skip_cg = .false.
+    rhs2 = 0.0D0
+    rr_old = 0.0D0
+    !$omp end single
+
+    !!!! Build Initial CG arrays
+    !$omp do collapse(3) reduction(+:rhs2, rr_old)
+    do ix=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+    do iz=1, subsub_ngrid
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      !! Zero BC
+      if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+         iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+         iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+        subsub_cgrhs(ii) = 0.0D0
+        subsub_cgLphi(ii) = 0.0D0
+        subsub_cgRes(ii) = 0.0D0
+        subsub_cgp(ii) = 0.0D0
+        cycle
+      endif
+
+      subsub_cgrhs(ii) = -fourpiG * subsub_obj(objind)%hydro(ii,1)
+
+      rhs2 = rhs2 + subsub_cgrhs(ii)*subsub_cgrhs(ii)
+
+      xu = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix+1
+      xd = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix-1
+      yu = (iz-1)*subsub_ngrid2 + (iy  )*subsub_ngrid + ix
+      yd = (iz-1)*subsub_ngrid2 + (iy-2)*subsub_ngrid + ix
+      zu = (iz  )*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      zd = (iz-2)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      subsub_cgLphi(ii) = (&
+        6.0D0*subsub_phi(ii) - subsub_phi(xu) - subsub_phi(xd) &
+        - subsub_phi(yu) - subsub_phi(yd) - subsub_phi(zu) - subsub_phi(zd) ) * dx2inv
+
+      subsub_cgRes(ii) = subsub_cgrhs(ii) - subsub_cgLphi(ii)
+      subsub_cgp(ii) = subsub_cgRes(ii)
+      rr_old = rr_old + subsub_cgRes(ii)*subsub_cgRes(ii)
+    enddo
+    enddo
+    enddo
+    !$omp end do
+
+    !$omp single
+    if(sqrt(rr_old / max(rhs2, subsub_smallr)) .le. subsub_poisson_tolerance) then
+      skip_cg = .true.
+    endif
+    !$omp end single
+
+
+    !!!! CG Loop
+    do iter=1, subsub_poisson_niter
+      if(skip_cg) exit
+
+      !$omp single
+      pLp = 0.0D0
+      rr_new = 0.0D0
+      subsub_ncheck_cg(3) = subsub_ncheck_cg(3) + 1
+      !$omp end single
+
+      !!!!!! Compute Lp & pLp
+      !$omp do collapse(3) reduction(+:pLp)
+      do ix=1, subsub_ngrid
+      do iy=1, subsub_ngrid
+      do iz=1, subsub_ngrid
+        ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        !! Zero BC
+        if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+           iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+           iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+          subsub_cgLp(ii) = 0.0D0
+          cycle
+        endif
+
+        xu = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix+1
+        xd = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix-1
+        yu = (iz-1)*subsub_ngrid2 + (iy  )*subsub_ngrid + ix
+        yd = (iz-1)*subsub_ngrid2 + (iy-2)*subsub_ngrid + ix
+        zu = (iz  )*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+        zd = (iz-2)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        subsub_cgLp(ii) = (&
+          6.0D0*subsub_cgp(ii) - subsub_cgp(xu) - subsub_cgp(xd) &
+          - subsub_cgp(yu) - subsub_cgp(yd) - subsub_cgp(zu) - subsub_cgp(zd) )  * dx2inv
+
+        pLp = pLp + subsub_cgp(ii) * subsub_cgLp(ii)
+
+      enddo
+      enddo
+      enddo
+      !$omp end do
+
+      !$omp single
+      if(abs(pLp) .lt. subsub_smallr) then
+        skip_cg = .true.
+        alpha = 0.0D0
+      else
+        alpha = rr_old / pLp
+      endif
+      !$omp end single
+
+      !!!!!! Update
+      !$omp do collapse(3) reduction(+:rr_new)
+      do ix=1, subsub_ngrid
+      do iy=1, subsub_ngrid
+      do iz=1, subsub_ngrid
+        ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        subsub_cgRes(ii) = subsub_cgRes(ii) - alpha*subsub_cgLp(ii)
+
+        !! BC
+        if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+           iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+           iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+
+          subsub_phi(ii) = fact1 / sqrt(subsub_dd2(ii) + subsub_poisson_softening**2)
+          cycle
+        endif
+
+
+        rr_new = rr_new + subsub_cgRes(ii) * subsub_cgRes(ii)
+        subsub_phi(ii) = subsub_phi(ii) + alpha * subsub_cgp(ii)
+      enddo
+      enddo
+      enddo
+      !$omp end do
+
+      !$omp single
+      relres = sqrt(rr_new / max(rhs2, subsub_smallr))
+      if(relres .lt. subsub_poisson_tolerance) skip_cg = .true.
+      beta = rr_new / max(rr_old, subsub_smallr)
+      !$omp end single
+
+      !! Update2
+      !$omp do collapse(3)
+      do ix=1, subsub_ngrid
+      do iy=1, subsub_ngrid
+      do iz=1, subsub_ngrid
+        ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+        !! Zero BC
+        if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+           iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+           iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+          subsub_cgp(ii) = 0.0D0
+          cycle
+        endif
+
+        subsub_cgp(ii) = subsub_cgRes(ii) + beta * subsub_cgp(ii)
+      enddo
+      enddo
+      enddo
+      !$omp end do
+
+      !$omp single
+      rr_old = rr_new
+      !$omp end single
+    enddo !! CG Iteration loop
+
+    !$omp barrier
+
+    !$omp single
+    subsub_obj(objind)%phi(:) = subsub_phi(:)
+#ifndef WITHOUTMPI
+    subsub_tcheck_cg(1) = subsub_tcheck_cg(1) + MPI_WTIME() - mpinow
+    mpinow = MPI_WTIME()
+#endif
+    !$omp end single
+
+    !!-----
+    !! Compute g from phi
+    !!-----
+    !$omp do collapse(3)
+    do ix=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+    do iz=1, subsub_ngrid
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      xu = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix+1
+      xd = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix-1
+      yu = (iz-1)*subsub_ngrid2 + (iy  )*subsub_ngrid + ix
+      yd = (iz-1)*subsub_ngrid2 + (iy-2)*subsub_ngrid + ix
+      zu = (iz  )*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      zd = (iz-2)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+
+      if(ix.eq.1) then
+        subsub_fg(ii,1) = - (subsub_phi(xu) - subsub_phi(ii)) / subsub_dx
+      else if(ix .eq. subsub_ngrid) then
+        subsub_fg(ii,1) = - (subsub_phi(ii) - subsub_phi(xd)) / subsub_dx
+      else
+        subsub_fg(ii,1) = - (subsub_phi(xu) - subsub_phi(xd)) / (2.0D0*subsub_dx)
+      endif
+
+      if(iy.eq.1) then
+        subsub_fg(ii,2) = - (subsub_phi(yu) - subsub_phi(ii)) / subsub_dx
+      else if(iy .eq. subsub_ngrid) then
+        subsub_fg(ii,2) = - (subsub_phi(ii) - subsub_phi(yd)) / subsub_dx
+      else
+        subsub_fg(ii,2) = - (subsub_phi(yu) - subsub_phi(yd)) / (2.0D0*subsub_dx)
+      endif
+
+      if(iz.eq.1) then
+        subsub_fg(ii,3) = - (subsub_phi(zu) - subsub_phi(ii)) / subsub_dx
+      else if(iz .eq. subsub_ngrid) then
+        subsub_fg(ii,3) = - (subsub_phi(ii) - subsub_phi(zd)) / subsub_dx
+      else
+        subsub_fg(ii,3) = - (subsub_phi(zu) - subsub_phi(zd)) / (2.0D0*subsub_dx)
+      endif
+    enddo
+    enddo
+    enddo
+    !$omp end do
+
+    !$omp barrier
+
+#ifndef WITHOUTMPI
+    !$omp single
+    subsub_tcheck_cg(2) = subsub_tcheck_cg(2) + MPI_WTIME() - mpinow
+    mpinow = MPI_WTIME()
+    !$omp end single
+#endif
+
+    !!-----
+    !! Second Kick: Velocity update by 1/2
+    !!-----
+    !$omp do
+    do i=1, subsub_nn
+      subsub_obj(objind)%hydro(i,2) = (subsub_vg_old(i,1) + subsub_fg(i,1) * (subsub_dt/2.0D0)) * subsub_obj(objind)%hydro(i,1)
+      subsub_obj(objind)%hydro(i,3) = (subsub_vg_old(i,2) + subsub_fg(i,2) * (subsub_dt/2.0D0)) * subsub_obj(objind)%hydro(i,1)
+      subsub_obj(objind)%hydro(i,4) = (subsub_vg_old(i,3) + subsub_fg(i,3) * (subsub_dt/2.0D0)) * subsub_obj(objind)%hydro(i,1)
+    enddo
+    !$omp end do
+
+    !$omp barrier
+
+#ifndef WITHOUTMPI 
+    !$omp single
+    subsub_tcheck_cg(4) = subsub_tcheck_cg(4) + MPI_WTIME() - mpinow
+    mpinow = MPI_WTIME()
+    !$omp end single
+#endif
+
+    !! loop-control 
+    !$omp single
+    subsub_t0 = subsub_t0 + subsub_dt
+    subsub_nstep = subsub_nstep + 1
+    
+    if(subsub_t0 .ge. dtold(levelmin))then
+      isexit = .true.
+    endif
+    !$omp end single
+  enddo !! Main Time loop
   !$omp end parallel
 
 
-  !!----- Deallocate
-  deallocate(rho_old)
-  deallocate(vg_old)
-  deallocate(vg_up)
-  deallocate(vg_down)
-  deallocate(flux_up)
-  deallocate(flux_down)
-
-end subroutine subsub_dnew
+  subsub_ncheck_cg(1) = subsub_nstep
+end subroutine subsub_cgkdk
 !################################################################
 !################################################################
 !################################################################
 !################################################################
-subroutine subsub_poissionnew(objind)
-  use subsub_commons
-  use subsub_parameters
-  use pm_commons
-  use amr_commons
-  use cooling_module, ONLY:twopi
-
-  implicit none
-  integer :: objind
-
-  !! Local variables
-  integer :: i, ix, iy, iz, ii, niter, iter
-  integer :: subsub_nn
-  integer :: xu, xd, yu, yd, zu, zd
-  real(dp) :: mtot, gconst, dd2, subsub_errmax, subsub_error0, fourpiG, dx2
-  real(dp), dimension(:), allocatable :: subsub_phi
-  real(dp)::scale_nH,scale_T2,scale_l,scale_d,scale_t,scale_v
-  
-  !!----- Constants
-  call units(scale_l,scale_t,scale_d,scale_v,scale_nH,scale_T2)
-
-  mtot = subsub_obj(objind)%mass_tot! + subsub_obj(objind)%sink_mass
-  gconst = 6.67d-8*scale_d*scale_t**2
-  fourpiG = gconst * 2d0*twopi
-  subsub_nn = subsub_ngrid**ndim
-
-  niter = subsub_poission_niter
-  dx2 = (subsub_boxlen / dble(subsub_ngrid)) ** 2
-  !!----- Initialize
-  allocate(subsub_phi(1:subsub_nn))
-  subsub_phi(:) = subsub_obj(objind)%phi(:)
-  
-  !! BC
-  !$omp parallel do default(shared) private(ix, iy, iz, dd2)
-  do i=1, subsub_nn
-    call subsub_get3ind(i, ix, iy, iz)
-
-    if(ix.eq.1 .or. ix .eq. subsub_ngrid .or. &
-       iy.eq.1 .or. iy .eq. subsub_ngrid .or. &
-       iz.eq.1 .or. iz .eq. subsub_ngrid) then
-
-       call subsub_getdist2(ix, iy, iz, dd2)
-
-       subsub_phi(i) = -gconst * mtot / sqrt(dd2 + subsub_softening**2)
-
-    endif
-  enddo
-  !$omp end parallel do
-
-  subsub_obj(objind)%phi(:) = subsub_phi(:)
-
-  !! Relexation  
-  subsub_errmax = 0.0D0
-  do iter=1, niter
-    
-    subsub_error0 = 0.0D0
-
-    !$omp parallel do default(shared) private(ii, ix, iy, iz) &
-    !$omp & private(xu, xd, yu, yd, zu, zd) collapse(3) &
-    !$omp & reduction(max:subsub_error0)
-    do iz=2, subsub_ngrid-1
-    do iy=2, subsub_ngrid-1
-    do ix=2, subsub_ngrid-1
-      call subsub_iget3ind(ii, ix, iy, iz)
-
-      call subsub_iget3ind(xu, ix+1, iy, iz)
-      call subsub_iget3ind(xd, ix-1, iy, iz)
-      call subsub_iget3ind(yu, ix, iy+1, iz)
-      call subsub_iget3ind(yd, ix, iy-1, iz)
-      call subsub_iget3ind(zu, ix, iy, iz+1)
-      call subsub_iget3ind(zd, ix, iy, iz-1)
-
-      subsub_phi(ii) = (&
-        subsub_obj(objind)%phi(xu) + subsub_obj(objind)%phi(xd) + &
-        subsub_obj(objind)%phi(yu) + subsub_obj(objind)%phi(yd) + &
-        subsub_obj(objind)%phi(zu) + subsub_obj(objind)%phi(zd) - &
-        dx2 * subsub_obj(objind)%hydro(ii,1) * fourpiG ) / 6.0D0
-      
-      subsub_error0 = max(abs(subsub_phi(ii) - subsub_obj(objind)%phi(ii)), subsub_smallr)
-      
-    enddo
-    enddo
-    enddo
-    !$omp end parallel do
-    
-    subsub_errmax = subsub_error0 / maxval( abs(subsub_obj(objind)%phi) ) 
-
-    subsub_obj(objind)%phi(:) = subsub_phi(:)
-
-    if(subsub_errmax .lt. subsub_poissiontolerance) exit
-  enddo
-
-  deallocate(subsub_phi)
-end subroutine subsub_poissionnew
-!################################################################
-!################################################################
-!################################################################
-!################################################################
-subroutine subsub_forcenew(objind)
-  use subsub_commons
-  use pm_commons
-  use amr_commons
-
-  implicit none
-  integer :: objind
-
-  !! Local variables
-  integer :: i, ii, ix, iy, iz
-  integer :: xu, xd, yu, yd, zu, zd
-  real(dp) :: dx
-
-  !!----- Constants
-  dx = subsub_boxlen / dble(subsub_ngrid)
-
-  !!----- initialize
-  subsub_obj(objind)%fg(:,:) = 0.0D0
-
-  !!----- Force from Phi
-  !$omp parallel do default(shared) private(ii, ix, iy, iz) &
-  !$omp & private(xu, xd, yu, yd, zu, zd) collapse(3)
-  do iz=2, subsub_ngrid-1
-  do iy=2, subsub_ngrid-1
-  do ix=2, subsub_ngrid-1
-      call subsub_iget3ind(ii, ix, iy, iz)
-
-      call subsub_iget3ind(xu, ix+1, iy, iz)
-      call subsub_iget3ind(xd, ix-1, iy, iz)
-      call subsub_iget3ind(yu, ix, iy+1, iz)
-      call subsub_iget3ind(yd, ix, iy-1, iz)
-      call subsub_iget3ind(zu, ix, iy, iz+1)
-      call subsub_iget3ind(zd, ix, iy, iz-1)
-
-      subsub_obj(objind)%fg(ii,1) = - (subsub_obj(objind)%phi(xu) - subsub_obj(objind)%phi(xd)) / (2.0D0*dx)
-      subsub_obj(objind)%fg(ii,2) = - (subsub_obj(objind)%phi(yu) - subsub_obj(objind)%phi(yd)) / (2.0D0*dx)
-      subsub_obj(objind)%fg(ii,3) = - (subsub_obj(objind)%phi(zu) - subsub_obj(objind)%phi(zd)) / (2.0D0*dx)
-  enddo
-  enddo
-  enddo
-  !$omp end parallel do
-end subroutine
-!################################################################
-!################################################################
-!################################################################
-!################################################################
-subroutine subsub_vnew(objind, dt)
-  use subsub_commons
-  use pm_commons
-  use amr_commons
-
-  implicit none
-  integer :: objind
-  real(dp) :: dt
-
-  !! Local variables
-  integer :: i, idim, subsub_nn
-
-  subsub_nn = subsub_ngrid**ndim
-
-  !$omp parallel do default(shared) private(idim)
-  do i=1, subsub_nn
-    do idim=1, ndim
-      subsub_obj(objind)%vg(i, idim) = subsub_obj(objind)%vg(i, idim) + subsub_obj(objind)%fg(i, idim) * dt
-    enddo
-  enddo
-  !$omp end parallel do
-end subroutine subsub_vnew

@@ -27,7 +27,11 @@ subroutine read_subsub_params(nml_ok)
 
   namelist/subsub_params/subsub_on &
        & ,subsub_ngrid &
-       & ,subsub_savecoarse
+       & ,subsub_savecoarse &
+       & ,subsub_poisson_type &
+       & ,subsub_poisson_niter &
+       & ,subsub_poisson_tolerance &
+       & , subsub_poisson_softening
 
 
   ! Read namelist file

@@ -7,14 +7,17 @@ module subsub_commons
      integer                               :: sink_id
      real(dp)                              :: sink_mass
      real(dp)                              :: mass_tot
-     real(dp)                              :: vxc, vyc, vzc
      integer                               :: clevel
+     integer                               :: domain
+     real(dp), dimension(:,:), allocatable :: uold
      !real(dp), dimension(:,:), allocatable :: xg
-     real(dp), dimension(:,:), allocatable :: vg !! ngrid^3 X ndim
+     !real(dp), dimension(:,:), allocatable :: vg !! ngrid^3 X ndim
      real(dp), dimension(:,:), allocatable :: hydro !! nlevel^3 X subsub_nhydro
      
      real(dp), dimension(:), allocatable :: phi !! ngird^3
-     real(dp), dimension(:,:), allocatable :: fg !! ngrid^3 X ndim
+
+     !! Not used at the moment
+     !real(dp), dimension(:,:), allocatable :: fg !! ngrid^3 X ndim
   end type subsub_type
 
   type(subsub_type), dimension(:), allocatable :: subsub_obj    !! has the size of nisnkmax in each cpu
@@ -22,8 +25,27 @@ module subsub_commons
 
   integer :: subsub_nsink !! total number of sinks (should be equal to nsink if a sink is not created)
   integer :: subsub_mpidp
+  integer :: subsub_nn
   real(dp) :: subsub_boxlen
+  real(dp) :: subsub_dx
 
+  real(dp), dimension(:), allocatable :: subsub_phi
+  real(dp), dimension(:,:), allocatable :: subsub_fg
+  real(dp), dimension(:), allocatable :: subsub_dd2
+
+  real(dp), dimension(:), allocatable   :: subsub_rho_old
+  real(dp), dimension(:,:), allocatable :: subsub_vg_old
+  !real(dp), dimension(:,:), allocatable :: subsub_vg_up, subsub_vg_down
+  !real(dp), dimension(:,:), allocatable :: subsub_flux_up, subsub_flux_down
+
+  real(dp), dimension(:), allocatable :: subsub_cgrhs
+  real(dp), dimension(:), allocatable :: subsub_cgLphi
+  real(dp), dimension(:), allocatable :: subsub_cgRes
+  real(dp), dimension(:), allocatable :: subsub_cgp, subsub_cgLp
+
+  integer :: subsub_debugn
+  real(dp) :: subsub_tcheck_cg(40), subsub_tcheck_cg_global(40)
+  integer :: subsub_ncheck_cg(10), subsub_ncheck_cg_global(10)
 contains
   subroutine subsub_precision_mpi()
     use mpi_mod

@@ -4,8 +4,8 @@ module subsub_parameters
   logical::subsub_on = .false. ! Flag for SUB2
 
   integer::subsub_ngrid = 4    ! # of cells in one direction
-  integer::subsub_nhydro = 1
-
+  integer::subsub_nhydro = 5   ! (rho, px, py, pz, E)
+  
   !! I/O
   logical :: subsub_savecoarse = .false.
 
@@ -14,13 +14,16 @@ module subsub_parameters
   integer :: subsub_inflowtype = 1 ! 1 as spherical inflow
   real(dp) :: subsub_densityfloor = 1.0D-10
 
-  !! Poission update
-  real(dp) :: subsub_softening = 0.0D0
-  integer :: subsub_poission_niter = 1000
-  real(dp) ::subsub_poissiontolerance = 1.0D-10
+  !! Poisson update
+  integer  :: subsub_poisson_type = 1 ! 1 as 6-Jac // 2 as CG // 3
+  real(dp) :: subsub_poisson_softening = 0.0D0
+  integer  :: subsub_poisson_niter = 1000
+  real(dp) :: subsub_poisson_tolerance = 1.0D-10
 
   !! ETC
   real(dp) :: subsub_smallr = 1.0D-10
   
+  !! DEV
+  integer :: subsub_dev_icsphere = 1
 
 end module subsub_parameters
