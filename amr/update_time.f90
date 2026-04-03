@@ -460,21 +460,16 @@ subroutine clean_stop
 
   ! SUBSUB deallocations
   if(subsub_on) then
-    if(allocated(subsub_phi)) deallocate(subsub_phi)
-    if(allocated(subsub_fg)) deallocate(subsub_fg)
-    if(allocated(subsub_rho_old)) deallocate(subsub_rho_old)
-    if(allocated(subsub_vg_old)) deallocate(subsub_vg_old)
+    if(allocated(subsub_faceind)) deallocate(subsub_faceind)
+    if(allocated(subsub_faceindx)) deallocate(subsub_faceindx)
+    if(allocated(subsub_faceindy)) deallocate(subsub_faceindy)
+    if(allocated(subsub_faceindz)) deallocate(subsub_faceindz)
+    if(allocated(subsub_hydrobc)) deallocate(subsub_hydrobc)
     !if(allocated(subsub_vg_up)) deallocate(subsub_vg_up)
     !if(allocated(subsub_vg_down)) deallocate(subsub_vg_down)
     !if(allocated(subsub_flux_up)) deallocate(subsub_flux_up)
     !if(allocated(subsub_flux_down)) deallocate(subsub_flux_down)
-  
-    if(allocated(subsub_cgrhs)) deallocate(subsub_cgrhs)
-    if(allocated(subsub_cgLphi)) deallocate(subsub_cgLphi)
-    if(allocated(subsub_cgRes)) deallocate(subsub_cgRes)
-    if(allocated(subsub_cgp)) deallocate(subsub_cgp)
-    if(allocated(subsub_cgLp)) deallocate(subsub_cgLp)
-    if(allocated(subsub_dd2)) deallocate(subsub_dd2)
+    if(allocated(subsub_dd)) deallocate(subsub_dd)
 
     if(subsub_end .ge. 1) then
       do i=1, subsub_end

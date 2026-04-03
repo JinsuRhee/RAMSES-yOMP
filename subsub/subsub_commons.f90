@@ -10,6 +10,8 @@ module subsub_commons
      integer                               :: clevel
      integer                               :: domain
      real(dp), dimension(:,:), allocatable :: uold
+        !! 0 myself
+        !! 1 (x-) 2 (x+) 3(y-) 4(y+) 5(z-) 6(z+)
      !real(dp), dimension(:,:), allocatable :: xg
      !real(dp), dimension(:,:), allocatable :: vg !! ngrid^3 X ndim
      real(dp), dimension(:,:), allocatable :: hydro !! nlevel^3 X subsub_nhydro
@@ -26,15 +28,24 @@ module subsub_commons
   integer :: subsub_nsink !! total number of sinks (should be equal to nsink if a sink is not created)
   integer :: subsub_mpidp
   integer :: subsub_nn
+  integer :: subsub_nnface
   real(dp) :: subsub_boxlen
   real(dp) :: subsub_dx
 
+  integer :: subsub_ngrid2
+
   real(dp), dimension(:), allocatable :: subsub_phi
   real(dp), dimension(:,:), allocatable :: subsub_fg
-  real(dp), dimension(:), allocatable :: subsub_dd2
+  real(dp), dimension(:), allocatable :: subsub_dd
+  integer, dimension(:), allocatable :: subsub_faceind
+  integer, dimension(:), allocatable :: subsub_faceindx
+  integer, dimension(:), allocatable :: subsub_faceindy
+  integer, dimension(:), allocatable :: subsub_faceindz
 
-  real(dp), dimension(:), allocatable   :: subsub_rho_old
-  real(dp), dimension(:,:), allocatable :: subsub_vg_old
+  real(dp), dimension(:,:), allocatable :: subsub_hydro
+  real(dp), dimension(:,:,:,:,:), allocatable :: subsub_hdummy
+  real(dp), dimension(:,:,:), allocatable :: subsub_csarr
+  !real(dp), dimension(:,:,:,:), allocatable :: subsub_hfx, subsub_hfy, subsub_hfz
   !real(dp), dimension(:,:), allocatable :: subsub_vg_up, subsub_vg_down
   !real(dp), dimension(:,:), allocatable :: subsub_flux_up, subsub_flux_down
 
@@ -42,6 +53,11 @@ module subsub_commons
   real(dp), dimension(:), allocatable :: subsub_cgLphi
   real(dp), dimension(:), allocatable :: subsub_cgRes
   real(dp), dimension(:), allocatable :: subsub_cgp, subsub_cgLp
+  real(dp) :: subsub_rhs2, subsub_rrold, subsub_rrnew, subsub_pLp, subsub_relres
+  real(dp) :: subsub_alpha, subsub_beta
+  logical :: subsub_skipcg
+
+  real(dp), dimension(:,:,:), allocatable :: subsub_hydrobc
 
   integer :: subsub_debugn
   real(dp) :: subsub_tcheck_cg(40), subsub_tcheck_cg_global(40)

@@ -19,7 +19,7 @@ subroutine init_subsub
   integer :: ismy
   character(LEN=5)::nchar
 
-  integer :: ii, ix, iy, iz
+  integer :: ii, ix, iy, iz, ii2
   real(dp) :: rx, ry, rz
   
   !! TODO Get by IO
@@ -31,55 +31,34 @@ subroutine init_subsub
   subsub_nn = subsub_ngrid**ndim
   subsub_dx = subsub_boxlen/dble(subsub_ngrid)
 
+  subsub_nnface = subsub_nn - (subsub_ngrid-2)**ndim
+
+  subsub_ngrid2 = subsub_ngrid * subsub_ngrid
+
+  subsub_poisson_softening = subsub_dx*0.5D0
+
   !!-----
   !! allocate
   !!-----
-  if(allocated(subsub_phi)) deallocate(subsub_phi)
-  allocate(subsub_phi(1:subsub_nn))
+  if(allocated(subsub_dd)) deallocate(subsub_dd)
+  allocate(subsub_dd(1:subsub_nn))
 
-  if(allocated(subsub_fg)) deallocate(subsub_fg)
-  allocate(subsub_fg(1:subsub_nn, 1:ndim))
+  if(allocated(subsub_faceind)) deallocate(subsub_faceind)
+  allocate(subsub_faceind(1:subsub_nnface))
 
+  if(allocated(subsub_faceindx)) deallocate(subsub_faceindx)
+  allocate(subsub_faceindx(1:subsub_nnface))
 
-  !! if memory overhead becomes worse, these can be allocated in the subroutine
-  if(allocated(subsub_rho_old)) deallocate(subsub_rho_old)
-  allocate(subsub_rho_old(1:subsub_nn))
+  if(allocated(subsub_faceindy)) deallocate(subsub_faceindy)
+  allocate(subsub_faceindy(1:subsub_nnface))
 
-  !! Density update
-  if(allocated(subsub_vg_old)) deallocate(subsub_vg_old)
-  allocate(subsub_vg_old(1:subsub_nn, 1:ndim))
+  if(allocated(subsub_faceindz)) deallocate(subsub_faceindz)
+  allocate(subsub_faceindz(1:subsub_nnface))
 
-  !if(allocated(subsub_vg_up)) deallocate(subsub_vg_up)
-  !allocate(subsub_vg_up(1:subsub_nn, 1:ndim))
+  if(allocated(subsub_hydrobc)) deallocate(subsub_hydrobc)
+  allocate(subsub_hydrobc(1:2, 1:ndim, 1:subsub_nhydro))
 
-  !if(allocated(subsub_vg_down)) deallocate(subsub_vg_down)
-  !allocate(subsub_vg_down(1:subsub_nn, 1:ndim))
-
-  !if(allocated(subsub_flux_up)) deallocate(subsub_flux_up)
-  !allocate(subsub_flux_up(1:subsub_nn, 1:ndim))
-
-  !if(allocated(subsub_flux_down)) deallocate(subsub_flux_down)
-  !allocate(subsub_flux_down(1:subsub_nn, 1:ndim))
-
-  !! CG related
-  if(allocated(subsub_cgrhs)) deallocate(subsub_cgrhs)
-  allocate(subsub_cgrhs(1:subsub_nn))
-
-  if(allocated(subsub_cgLphi)) deallocate(subsub_cgLphi)
-  allocate(subsub_cgLphi(1:subsub_nn))
-
-  if(allocated(subsub_cgRes)) deallocate(subsub_cgRes)
-  allocate(subsub_cgRes(1:subsub_nn))
-
-  if(allocated(subsub_cgp)) deallocate(subsub_cgp)
-  allocate(subsub_cgp(1:subsub_nn))
-
-  if(allocated(subsub_cgLp)) deallocate(subsub_cgLp)
-  allocate(subsub_cgLp(1:subsub_nn))
-
-  if(allocated(subsub_dd2)) deallocate(subsub_dd2)
-  allocate(subsub_dd2(1:subsub_nn))
-
+  ii2 = 1
   !$omp parallel do collapse(3) private(ii, ix, iy, iz, rx, ry, rz)
   do ix=1, subsub_ngrid
   do iy=1, subsub_ngrid
@@ -89,7 +68,22 @@ subroutine init_subsub
     ry = (dble(iy) - 0.5D0) * subsub_dx
     rz = (dble(iz) - 0.5D0) * subsub_dx
 
-    subsub_dd2(ii) = (rx-subsub_boxlen/2.0D0)**2 + (ry-subsub_boxlen/2.0D0)**2 + (rz-subsub_boxlen/2.0D0)**2
+    subsub_dd(ii) = (rx-subsub_boxlen/2.0D0)**2 + (ry-subsub_boxlen/2.0D0)**2 + (rz-subsub_boxlen/2.0D0)**2 + subsub_poisson_softening**2
+    subsub_dd(ii) = sqrt(subsub_dd(ii))
+
+    !! Zero BC
+    if(ix.eq. 1 .or. ix .eq. subsub_ngrid .or. &
+      iy.eq. 1 .or. iy .eq. subsub_ngrid .or. &
+      iz.eq. 1 .or. iz .eq. subsub_ngrid) then
+
+      !$omp critical
+      subsub_faceind(ii2) = ii
+      subsub_faceindx(ii2) = ix
+      subsub_faceindy(ii2) = iy
+      subsub_faceindz(ii2) = iz
+      ii2 = ii2 + 1
+      !$omp end critical
+    endif
   enddo
   enddo
   enddo

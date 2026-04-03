@@ -12,18 +12,21 @@ module subsub_parameters
   !! Density update
   real(dp) :: subsub_cfl = 0.5D0
   integer :: subsub_inflowtype = 1 ! 1 as spherical inflow
-  real(dp) :: subsub_densityfloor = 1.0D-10
+  real(dp) :: subsub_dfloor = 1.0D-10
+  real(dp) :: subsub_pfloor = 1.0D-10
 
   !! Poisson update
   integer  :: subsub_poisson_type = 1 ! 1 as 6-Jac // 2 as CG // 3
   real(dp) :: subsub_poisson_softening = 0.0D0
   integer  :: subsub_poisson_niter = 1000
-  real(dp) :: subsub_poisson_tolerance = 1.0D-10
+  real(dp) :: subsub_poisson_tolerance = 1.0D-4
 
+  !! Hydro
+  integer :: subsub_RiemannType = 1 ! 1 as Rusanov
   !! ETC
   real(dp) :: subsub_smallr = 1.0D-10
   
   !! DEV
-  integer :: subsub_dev_icsphere = 1
+  integer :: subsub_dev_icsphere = 0
 
 end module subsub_parameters

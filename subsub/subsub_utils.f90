@@ -370,7 +370,7 @@ subroutine subsub_getdist2(ix, iy, iz, dd2)
   
   dd2 = (rx-center(1))**2 + (ry-center(2))**2 + (rz-center(3))**2
   
-end subroutine
+end subroutine subsub_getdist2
 !################################################################
 !################################################################
 !################################################################
@@ -399,6 +399,190 @@ subroutine subsub_finddt(subsub_dt, varr)
     subsub_dt = subsub_dt * 0.5D0
   enddo
 end subroutine subsub_finddt
+!################################################################
+!################################################################
+!################################################################
+!################################################################
+subroutine subsub_getnbor(ind_cell, ind_nbcell, ind_nbgrid, ind_pos)
+  use amr_commons
+  implicit none
+  integer::ind_cell
+  integer, dimension(0:twondim)::ind_nbcell, ind_nbgrid, ind_pos
+  !-----------------------------------------------------------------
+  ! This subroutine determines the 2*ndim neighboring cells
+  ! cells of the input cell (ind_cell).
+  ! If for some reasons they don't exist, the routine returns
+  ! 0.
+  !
+  ! copied from star_formation.f90
+  !-----------------------------------------------------------------
+  integer::i,j,iskip, ig, ih
+  integer::pos,ind_grid_father
+  integer,dimension(1:8,1:6)::ggg,hhh
+
+
+  ggg(1:8,1)=(/1,0,1,0,1,0,1,0/); hhh(1:8,1)=(/2,1,4,3,6,5,8,7/)
+  ggg(1:8,2)=(/0,2,0,2,0,2,0,2/); hhh(1:8,2)=(/2,1,4,3,6,5,8,7/)
+  ggg(1:8,3)=(/3,3,0,0,3,3,0,0/); hhh(1:8,3)=(/3,4,1,2,7,8,5,6/)
+  ggg(1:8,4)=(/0,0,4,4,0,0,4,4/); hhh(1:8,4)=(/3,4,1,2,7,8,5,6/)
+  ggg(1:8,5)=(/5,5,5,5,0,0,0,0/); hhh(1:8,5)=(/5,6,7,8,1,2,3,4/)
+  ggg(1:8,6)=(/0,0,0,0,6,6,6,6/); hhh(1:8,6)=(/5,6,7,8,1,2,3,4/)
+
+  ! Get father cell position in the grid
+  pos = (ind_cell-ncoarse-1)/ngridmax+1
+
+  ! Get father grid
+  ind_grid_father=ind_cell-ncoarse-(pos-1)*ngridmax
+  
+  ! Get neighboring father grids
+  ind_nbgrid(0) = ind_grid_father
+  do j=1, twondim
+    ind_nbgrid(j)=son( nbor(ind_grid_father,j) )
+  enddo
+
+  ind_nbcell(0:twondim)=0
+  ind_pos(0:twondim)=0
+  ind_pos(0) = pos
+  ind_nbcell(0) = ind_cell
+  do j=1, twondim
+    ig=ggg(pos,j)
+    ih=hhh(pos,j)
+    iskip=ncoarse+(ih-1)*ngridmax
+    if(ind_nbgrid(ig)>0)then
+      ind_nbcell(j)=iskip+ind_nbgrid(ig)
+      ind_pos(j)=ih-1
+    endif
+  enddo
+
+end subroutine subsub_getnbor
+!################################################################
+!################################################################
+!################################################################
+!################################################################
+subroutine subsub_nbcellinput(ind_cell, ind_level, hvar)
+  use amr_commons
+  use subsub_commons
+  use hydro_commons
+  use hydro_parameters, ONLY: gamma
+  implicit none
+
+  integer :: ind_cell, ind_level
+  real(dp), dimension(0:twondim, 1:subsub_nhydro) :: hvar
+
+  !! Local variables
+  integer :: i, j, ivar
+  integer, dimension(0:twondim) :: ind_nbcell, ind_nbgrid, ind_pos
+  real(dp), dimension(1:subsub_nhydro) :: hdum
+
+  integer :: ix, iy, iz, ind
+  real(dp),dimension(1:twotondim,1:3):: xc
+  real(dp),dimension(1:3)::skip_loc
+  real(dp) :: cx, cy, cz, dx, cx2, cy2, cz2
+
+  real(dp) :: r, u, v, w, r0, u0, v0, w0, e0
+
+  call subsub_getnbor(ind_cell, ind_nbcell, ind_nbgrid, ind_pos)
+
+  !do ind=1,twotondim
+  !  iz=(ind-1)/4
+  !  iy=(ind-1-4*iz)/2
+  !  ix=(ind-1-2*iy-4*iz)
+  !  xc(ind,1)=(dble(ix)-0.5D0)
+  !  xc(ind,2)=(dble(iy)-0.5D0)
+  !  xc(ind,3)=(dble(iz)-0.5D0)
+  !end do
+  !skip_loc=(/0.0d0,0.0d0,0.0d0/)
+  !skip_loc(1)=dble(icoarse_min)
+  !skip_loc(2)=dble(jcoarse_min)
+  !skip_loc(3)=dble(kcoarse_min)
+  
+
+  !!-----
+  !! Host Cell
+  !!-----
+  do ivar=1, subsub_nhydro
+    hvar(0,ivar) = uold(ind_cell, ivar)
+  enddo
+
+  !!-----
+  !! Shift to the object frame
+  !!-----
+  r0 = hvar(0,1)
+  u0 = hvar(0,2)/r0
+  v0 = hvar(0,3)/r0
+  w0 = hvar(0,4)/r0
+  e0 = hvar(0,5) - 0.5D0*r0*(u0**2 + v0**2 + w0**2)
+
+
+  hvar(0,2:4) = 0.0D0
+  hvar(0,5) = e0
+
+  j = 0
+
+  hdum(1:subsub_nhydro) = 0.0D0
+  do i=1, twondim
+    if(ind_nbcell(i).gt.0)then
+      j = j+1
+
+      do ivar=1, subsub_nhydro
+        hvar(i,ivar) = uold(ind_nbcell(i),ivar)
+      enddo
+
+      
+      !! Shift to the object frame
+      r = hvar(i,1)
+      u = hvar(i,2) / r
+      v = hvar(i,3) / r
+      w = hvar(i,4) / r
+
+      hvar(i,2) = hvar(i,2) - u0*r
+      hvar(i,3) = hvar(i,3) - v0*r
+      hvar(i,4) = hvar(i,4) - w0*r
+
+      
+      hvar(i,5) = hvar(i,5) - (u0*u*r + v0*v*r + w0*w*r) + 0.5D0*r*(u0**2 + v0**2 + w0**2)
+
+      hdum(1) = hdum(1) + hvar(i,1)
+      hdum(2) = hdum(2) + hvar(i,2)/hvar(i,1)
+      hdum(3) = hdum(3) + hvar(i,3)/hvar(i,1)
+      hdum(4) = hdum(4) + hvar(i,4)/hvar(i,1)
+      hdum(5) = hdum(5) + (gamma - 1.0D0)*(hvar(i,5) - 0.5D0*(hvar(i,2)**2 + hvar(i,3)**2 + hvar(i,4)**2)/hvar(i,1))
+    endif
+  enddo
+
+  if(j.lt.3) then
+    write(*,*) 'how it could be with j < 3?'
+    stop 
+  endif
+
+  if(j.ne.6) then
+    hdum(1) = hdum(1) / dble(j)
+    hdum(2) = hdum(2) / dble(j)
+    hdum(3) = hdum(3) / dble(j)
+    hdum(4) = hdum(4) / dble(j)
+    hdum(5) = hdum(5) / dble(j)
+    !! Give the average density and velocity and pressure to empty arrays
+    do i=1, twondim
+      if(ind_nbcell(i).eq.0)then
+        hvar(i,1) = hdum(1)
+        hvar(i,2) = hdum(2) * hdum(1)
+        hvar(i,3) = hdum(3) * hdum(1)
+        hvar(i,4) = hdum(4) * hdum(1)
+        hvar(i,5) = hdum(5) / (gamma - 1.0D0) + 0.5D0 * hdum(1) * (hdum(2)**2 + hdum(3)**2 + hdum(4)**2)
+      endif
+    enddo
+  endif
+
+  !! Fill empty neighbors to the mean values
+  !do i=1, twondim
+  !  if(ind_nbcell(i).eq.0)then
+  !    do ivar=1, subsub_nhydro
+  !      hvar(i,ivar) = hdum(ivar) / dble(j)
+  !    enddo
+  !  endif
+  !enddo
+
+end subroutine subsub_nbcellinput
 
 !! TO DO SOMEDAYS
 

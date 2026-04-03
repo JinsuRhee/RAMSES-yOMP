@@ -238,11 +238,33 @@ subroutine subsub_compute
   nx_loc=(icoarse_max-icoarse_min+1)
   scale=boxlen/dble(nx_loc)
 
+  !!----- RHEE -----
+  !! If the memory usage becomes problematic, we may think of reclying arrays below?
+  !!----------------
+  allocate(subsub_phi(1:subsub_nn))
+  allocate(subsub_fg(1:subsub_nn, 1:ndim))
+  allocate(subsub_cgrhs(1:subsub_nn))
+  allocate(subsub_cgLphi(1:subsub_nn))
+  allocate(subsub_cgRes(1:subsub_nn))
+  allocate(subsub_cgp(1:subsub_nn))
+  allocate(subsub_cgLp(1:subsub_nn))
+
+  allocate(subsub_hydro(1:subsub_nn, 1:subsub_nhydro))
+  allocate(subsub_csarr(1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_ngrid))
+  !allocate(subsub_hydrobc(1:2, 1:ndim, 1:subsub_nhydro))
+  allocate(subsub_hdummy(1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_nhydro, 1:5))
+  !1 conservative old
+  !2 primitive old
+  !3 Fx
+  !4 Fy
+  !5 Fz
+
   !! update sink by sink
   do i=1, subsub_end
 
     sinkind = subsub_obj(i)%sink_ind
 
+write(*,*) '%112233', myid, i, ' / ', subsub_end
     !call subsub_findcell(xsink(sinkind,1)/scale, xsink(sinkind,2)/scale, xsink(sinkind,3)/scale, &
     !   ind_cell, ind_grid, ind_level, subflag)
 
@@ -258,7 +280,7 @@ subroutine subsub_compute
     !! update mass_tot
     mtot_old = subsub_obj(i)%mass_tot
     mbh_old = subsub_obj(i)%sink_mass
-    mtot_new = (subsub_boxlen**ndim) * max(subsub_obj(i)%uold(1,1), subsub_smallr)
+    mtot_new = (subsub_boxlen**ndim) * max(subsub_obj(i)%uold(0,1), subsub_smallr)
     mbh_new = msink(sinkind)
 
    !! update density by the mass change
@@ -287,7 +309,7 @@ subroutine subsub_compute
 !     write(*,*) '%456456 den(2,2,2)', subsub_obj(i)%hydro(j,1)
 !     write(*,*) '%456456 den(1,1,1)', subsub_obj(i)%hydro(1,1)
 !   endif
-   call subsub_computefine(i, mtot_new-mtot_old, mbh_new-mbh_old)
+   call subsub_computefine(i, mtot_new, mbh_new)
 
 !if(mtot_new-mtot_old .gt. 0) write(*,*) 'good sink = ', idsink(sinkind)
 !   if(idsink(sinkind) .eq. 829) then
@@ -308,7 +330,21 @@ subroutine subsub_compute
 !! neglect mass conversion (starts from initial mass)
    !subsub_obj(i)%mass_tot = mtot_new
    subsub_obj(i)%sink_mass = msink(sinkind)
+write(*,*) '%112233 done ', myid, i, ' / ', subsub_end
   enddo
   
+  deallocate(subsub_phi)
+  deallocate(subsub_fg)
+  deallocate(subsub_cgrhs)
+  deallocate(subsub_cgLphi)
+  deallocate(subsub_cgRes)
+  deallocate(subsub_cgp)
+  deallocate(subsub_cgLp)
+
+  deallocate(subsub_hydro)
+  deallocate(subsub_csarr)
+  !deallocate(subsub_hydrobc)
+  deallocate(subsub_hdummy)
+
 
 end subroutine subsub_compute
