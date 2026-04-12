@@ -8,6 +8,10 @@ module subsub_parameters
   
   !! I/O
   logical :: subsub_savecoarse = .false.
+  integer :: subsub_mpidblpren = 3
+
+  !! Mass in/out controller
+  real(dp) :: subsub_massinfac = 2.0D0
 
   !! Density update
   real(dp) :: subsub_cfl = 0.5D0
@@ -28,5 +32,7 @@ module subsub_parameters
   
   !! DEV
   integer :: subsub_dev_icsphere = 0
+  integer :: subsub_dev_gravonly = 1
+  integer :: subsub_dev_hydroonly = 1
 
 end module subsub_parameters

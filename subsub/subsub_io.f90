@@ -40,6 +40,7 @@ subroutine subsub_backup(filename)
     write(unit_out) subsub_nsink
     write(unit_out) subsub_ngrid
     write(unit_out) subsub_nhydro
+    write(unit_out) subsub_boxlen
     write(unit_out) ndim
     write(unit_out) aexp
     write(unit_out) scale_l
@@ -55,12 +56,12 @@ subroutine subsub_backup(filename)
     endif
 
     do i=1, subsub_nsink
-!write(*,*) i, maxval(subsub_dump(i)%hydro(:,1)), minval(subsub_dump(i)%hydro(:,1))
 !write(*,*) maxval(subsub_dump(i)%hydro(:,2)), minval(subsub_dump(i)%hydro(:,2))
       write(unit_out) subsub_dump(i)%sink_ind          !! sink index
       write(unit_out) subsub_dump(i)%sink_id           !! sink id
       write(unit_out) subsub_dump(i)%sink_mass         !! sink id
       write(unit_out) subsub_dump(i)%mass_tot          !! total mass
+      write(unit_out) subsub_dump(i)%mass_cell         !! cell mass
       do icell=0, twondim
         write(unit_out) subsub_dump(i)%uold(icell,:)              !! uold of the hosting cell
       enddo
@@ -75,6 +76,8 @@ subroutine subsub_backup(filename)
       do j=1, subsub_nhydro
         write(unit_out) subsub_dump(i)%hydro(:,j)
       enddo
+
+      write(unit_out) subsub_dump(i)%phi
     enddo
     
 
@@ -146,6 +149,8 @@ subroutine subsub_readdump
       stop
     endif
 
+    read(unit_out) ! boxlen
+
     read(unit_out) dumint
     if(dumint .ne. ndim) then
       call subsub_log('ndim mismatched', 'subsub_readdump')
@@ -182,6 +187,9 @@ subroutine subsub_readdump
   
       read(unit_out) dumdp
       subsub_dummy(i)%mass_tot = dumdp
+
+      read(unit_out) dumdp
+      subsub_dummy(i)%mass_cell = dumdp
   
       do icell=0, twondim
         read(unit_out) dumdp2
@@ -203,8 +211,11 @@ subroutine subsub_readdump
   
       do j=1, subsub_nhydro
         read(unit_out) dumdparr
-        subsub_dummy(i)%hydro(:,j) = dumdparr
+        subsub_dummy(i)%hydro(:,j) = dumdparr(:)
       enddo
+
+      read(unit_out) dumdparr
+      subsub_dummy(i)%phi(:) = dumdparr(:)
   
       !! debugger
       if(idsink(subsub_dummy(i)%sink_ind) .ne. subsub_dummy(i)%sink_id) then
@@ -272,8 +283,8 @@ subroutine subsub_gather(subsub_dump)
   integer,parameter::tag7=6427,tag8=6428,tag9=6429
   integer,parameter::tag10=6430, tag11=6431, tag12=6432
 
-  real(dp), dimension(1:2+subsub_nhydro*(twondim+1)) :: dblarr
-  integer,  dimension(1:2+subsub_nhydro*(twondim+1)) :: intarr
+  real(dp), dimension(1:subsub_mpidblpren+subsub_nhydro*(twondim+1)) :: dblarr
+  integer,  dimension(1:subsub_mpidblpren+subsub_nhydro*(twondim+1)) :: intarr
   real(dp) :: tcheck(20)
 
   if(nsink.eq.0) return
@@ -287,7 +298,7 @@ subroutine subsub_gather(subsub_dump)
 
   !!----- Receive
   subsub_nn0 = subsub_nn
-  subsub_nn1 = 2+subsub_nhydro*(twondim+1)
+  subsub_nn1 = subsub_mpidblpren+subsub_nhydro*(twondim+1)
   subsub_nn2 = (subsub_nn) * subsub_nhydro
 
   iend = 0
@@ -312,8 +323,9 @@ subroutine subsub_gather(subsub_dump)
 
         subsub_dump(i)%sink_mass = dblarr(1)
         subsub_dump(i)%mass_tot = dblarr(2)
+        subsub_dump(i)%mass_cell = dblarr(3)
 
-        icell0 = 3
+        icell0 = subsub_mpidblpren+1
         do icell=0, twondim
           do ivar=1, subsub_nhydro
             subsub_dump(i)%uold(icell,ivar) = dblarr(icell0)
@@ -330,8 +342,9 @@ subroutine subsub_gather(subsub_dump)
 
         dblarr(1)   = subsub_obj(iend)%sink_mass
         dblarr(2)   = subsub_obj(iend)%mass_tot
+        dblarr(3)   = subsub_obj(iend)%mass_cell
 
-        icell0 = 3
+        icell0 = subsub_mpidblpren+1
         do icell=0, twondim
           do ivar=1, subsub_nhydro
             dblarr(icell0) = subsub_obj(iend)%uold(icell,ivar)
@@ -362,6 +375,7 @@ end subroutine subsub_gather
 !################################################################
 subroutine subsub_spread(subsub_dummy)
   use subsub_commons
+  use subsub_parameters
   use amr_commons
   use pm_commons
   use mpi_mod
@@ -381,8 +395,8 @@ subroutine subsub_spread(subsub_dummy)
   integer, dimension(1:nsink) :: ismysink_dump, ismysink
   integer :: subsub_sinkinmyid
   real(dp):: scale
-  real(dp), dimension(1:2+subsub_nhydro*(twondim+1)) :: dblarr
-  integer,  dimension(1:2+subsub_nhydro*(twondim+1)) :: intarr
+  real(dp), dimension(1:subsub_mpidblpren+subsub_nhydro*(twondim+1)) :: dblarr
+  integer,  dimension(1:subsub_mpidblpren+subsub_nhydro*(twondim+1)) :: intarr
   !real(dp):: dx, dx_max
 
   nx_loc=(icoarse_max-icoarse_min+1)
@@ -394,21 +408,23 @@ subroutine subsub_spread(subsub_dummy)
   !!-----
   !! Check ownwership
   !!-----
+  
   do i=1, nsink
     !ismy = -1
     !call subsub_finddomain(xsink(i,1)/scale, xsink(i,2)/scale, xsink(i,3)/scale, ismy)
     !if(ismy .gt. 0) ismysink_dump(i) = myid
-    ismysink_dump(i) = mod(abs(idsink(i)),ncpu) + 1
+    !ismysink_dump(i) = mod(abs(idsink(i)),ncpu) + 1
+    ismysink(i) = mod(abs(idsink(i)),ncpu) + 1
   enddo
-
-  call MPI_ALLREDUCE(ismysink_dump,ismysink,nsink,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,info)
+  
+  !call MPI_ALLREDUCE(ismysink_dump,ismysink,nsink,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,info)
 
   !!-----
   !! Spread
   !!-----
   subsub_end = 0
   subsub_nn0 = subsub_nn
-  subsub_nn1 = 2+subsub_nhydro*(twondim+1)
+  subsub_nn1 = subsub_mpidblpren+subsub_nhydro*(twondim+1)
   subsub_nn2 = (subsub_nn) * subsub_nhydro
 
   do i=1, nsink
@@ -426,8 +442,9 @@ subroutine subsub_spread(subsub_dummy)
 
         dblarr(1) = subsub_dummy(i)%sink_mass
         dblarr(2) = subsub_dummy(i)%mass_tot
+        dblarr(3) = subsub_dummy(i)%mass_cell
 
-        icell0 = 3
+        icell0 = subsub_mpidblpren+1
         do icell=0, twondim
           do ivar=1, subsub_nhydro
             dblarr(icell0) = subsub_dummy(i)%uold(icell,ivar)
@@ -460,8 +477,9 @@ subroutine subsub_spread(subsub_dummy)
 
         subsub_obj(subsub_end)%sink_mass = dblarr(1)
         subsub_obj(subsub_end)%mass_tot = dblarr(2)
+        subsub_obj(subsub_end)%mass_cell = dblarr(3)
 
-        icell0 = 3
+        icell0 = subsub_mpidblpren+1
         do icell=0, twondim
           do ivar=1, subsub_nhydro
             subsub_obj(subsub_end)%uold(icell,ivar) = dblarr(icell0)
@@ -613,6 +631,7 @@ subroutine subsub_deallocate(subsub_dummy)
   subsub_dummy%sink_id = 0
   subsub_dummy%sink_mass = 0.0D0
   subsub_dummy%mass_tot = 0.0D0
+  subsub_dummy%mass_cell = 0.0D0
   subsub_dummy%clevel = 0
   subsub_dummy%domain = 0
      
@@ -712,7 +731,7 @@ subroutine subsub_updatedomain
   real(dp), dimension(1:subsub_nhydro*(twondim+1)) :: dblarr
   integer, dimension(1:1) :: intarr
 
-  integer :: ix, iy, iz, ii, subsub_ngrid2
+  integer :: ix, iy, iz, ii
   real(dp) :: r, u, v, w
   
 
@@ -724,7 +743,7 @@ subroutine subsub_updatedomain
   nx_loc=(icoarse_max-icoarse_min+1)
   scale=boxlen/dble(nx_loc)
 
-  subsub_ngrid2 = subsub_ngrid * subsub_ngrid
+  !subsub_ngrid2 = subsub_ngrid * subsub_ngrid
 
   !! find ownership
 #ifndef WITHOUTMPI
@@ -765,20 +784,39 @@ subroutine subsub_updatedomain
           stop
         endif
 
-
+        call subsub_nbcellinput(ind_cell, ind_level, subsub_obj(myind)%uold(:,:))
 
         !!----- Initialize for newly allocated
-        if(subsub_obj(myind)%domain .eq. 0) then 
-          subsub_obj(myind)%hydro(:,1) = uold(ind_cell,1)
-          subsub_obj(myind)%hydro(:,2) = 0.0D0
-          subsub_obj(myind)%hydro(:,3) = 0.0D0
-          subsub_obj(myind)%hydro(:,4) = 0.0D0
-          r = uold(ind_cell,1)
-          u = uold(ind_cell,2)/r
-          v = uold(ind_cell,3)/r
-          w = uold(ind_cell,4)/r 
-          subsub_obj(myind)%hydro(:,5) = uold(ind_cell,5)-0.5D0*r*(u**2 + v**2 + w**2)
+        if(subsub_obj(myind)%domain .eq. 0) then
 
+          !$omp parallel do
+          do j=1, subsub_nn
+            subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
+            subsub_obj(myind)%hydro(j,2) = subsub_obj(myind)%uold(0,2)
+            subsub_obj(myind)%hydro(j,3) = subsub_obj(myind)%uold(0,3)
+            subsub_obj(myind)%hydro(j,4) = subsub_obj(myind)%uold(0,4)
+            subsub_obj(myind)%hydro(j,5) = subsub_obj(myind)%uold(0,5)
+
+            !! DEBUG MODE FOR SELF-GRAVITY TEST
+            !! )) DEBUGG GRAV((         <- this is for grep
+            if(subsub_dev_gravonly .eq. 1)then
+              !subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%hydro(j,1) * subsub_dd(j)
+              subsub_obj(myind)%hydro(j,2) = 0.0D0
+              subsub_obj(myind)%hydro(j,3) = 0.0D0
+              subsub_obj(myind)%hydro(j,4) = 0.0D0
+              subsub_obj(myind)%hydro(j,5) = 0.0D0
+            endif
+          enddo
+          !$omp end parallel do
+          !r = uold(ind_cell,1)
+          !u = uold(ind_cell,2)/r
+          !v = uold(ind_cell,3)/r
+          !w = uold(ind_cell,4)/r 
+          !subsub_obj(myind)%hydro(:,5) = uold(ind_cell,5)-0.5D0*r*(u**2 + v**2 + w**2)
+
+          !! initial mass by the total cell mass
+          subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(uold(ind_cell,1), subsub_dfloor)
+          subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(uold(ind_cell,1), subsub_dfloor)
           if(subsub_dev_icsphere .eq. 1) then
             !!----- RHEE -----
             !! For spherical IC test
@@ -794,9 +832,6 @@ subroutine subsub_updatedomain
           endif
         endif
 
-        call subsub_nbcellinput(ind_cell, ind_level, subsub_obj(myind)%uold(:,:))
-
-        subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(uold(ind_cell,1), subsub_dfloor)
         subsub_obj(myind)%clevel = ind_level
         subsub_obj(myind)%domain = myid
 
@@ -804,33 +839,6 @@ subroutine subsub_updatedomain
       else
         call MPI_RECV(dblarr(1), subsub_nhydro*(twondim+1), subsub_mpidp, mysink(i)-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
         call MPI_RECV(intarr(1), 1, MPI_INTEGER,  mysink(i)-1, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
-
-        !!----- Initialize for newly allocated
-        if(subsub_obj(myind)%domain .eq. 0) then 
-          subsub_obj(myind)%hydro(:,1) = dblarr(1)
-          subsub_obj(myind)%hydro(:,2) = 0.0D0
-          subsub_obj(myind)%hydro(:,3) = 0.0D0
-          subsub_obj(myind)%hydro(:,4) = 0.0D0
-          r = dblarr(1)
-          u = dblarr(2)/r
-          v = dblarr(3)/r
-          w = dblarr(4)/r 
-          subsub_obj(myind)%hydro(:,5) = dblarr(5)-0.5D0*r*(u**2 + v**2 + w**2)
-
-          if(subsub_dev_icsphere .eq. 1) then
-            !!----- RHEE -----
-            !! For spherical IC test
-            !!----------------
-            do ix=1, subsub_ngrid
-            do iy=1, subsub_ngrid
-            do iz=1, subsub_ngrid
-              ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
-              if(ix**2 + iy**2 + iz**2 .gt. subsub_ngrid**2) subsub_obj(myind)%hydro(ii,1) = subsub_dfloor
-            enddo
-            enddo
-            enddo
-          endif
-        endif
 
         icell0 = 1
         do icell=0, twondim
@@ -840,7 +848,54 @@ subroutine subsub_updatedomain
           enddo
         enddo
 
-        subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
+        !!----- Initialize for newly allocated
+        if(subsub_obj(myind)%domain .eq. 0) then 
+
+          !$omp parallel do
+          do j=1, subsub_nn
+            subsub_obj(myind)%hydro(j,1) = dblarr(1)
+            subsub_obj(myind)%hydro(j,2) = dblarr(2)
+            subsub_obj(myind)%hydro(j,3) = dblarr(3)
+            subsub_obj(myind)%hydro(j,4) = dblarr(4)
+            subsub_obj(myind)%hydro(j,5) = dblarr(5)
+
+            !! DEBUG MODE FOR SELF-GRAVITY TEST
+            !! )) DEBUGG GRAV((         <- this is for grep
+            if(subsub_dev_gravonly .eq. 1)then
+              subsub_obj(myind)%hydro(j,2) = 0.0D0
+              subsub_obj(myind)%hydro(j,3) = 0.0D0
+              subsub_obj(myind)%hydro(j,4) = 0.0D0
+              subsub_obj(myind)%hydro(j,5) = 0.0D0
+            endif
+          enddo
+          !$omp end parallel do
+
+          !r = dblarr(1)
+          !u = dblarr(2)/r
+          !v = dblarr(3)/r
+          !w = dblarr(4)/r 
+          !subsub_obj(myind)%hydro(:,5) = dblarr(5)-0.5D0*r*(u**2 + v**2 + w**2)
+
+          !! initial mass by the total cell mass
+          subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
+          subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
+
+          if(subsub_dev_icsphere .eq. 1) then
+            !!----- RHEE -----
+            !! For spherical IC test
+            !!----------------
+            do ix=1, subsub_ngrid
+            do iy=1, subsub_ngrid
+            do iz=1, subsub_ngrid
+              ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+              if(ix**2 + iy**2 + iz**2 .gt. subsub_ngrid**2) subsub_obj(myind)%hydro(ii,1) = subsub_dfloor
+            enddo
+            enddo
+            enddo
+          endif
+        endif
+
+
         subsub_obj(myind)%clevel = intarr(1)
         subsub_obj(myind)%domain = mysink(i)
 

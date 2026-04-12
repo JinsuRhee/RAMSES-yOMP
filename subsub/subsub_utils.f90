@@ -339,7 +339,6 @@ subroutine subsub_sortbyind(subsub_dummy, nn)
   do i=2, nn
     temp = subsub_dummy(i)
     j = i-1
-
     do while (j >= 1 .and. subsub_dummy(j)%sink_ind > temp%sink_ind)
       subsub_dummy(j+1) = subsub_dummy(j)
       j = j - 1

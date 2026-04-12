@@ -7,6 +7,7 @@ module subsub_commons
      integer                               :: sink_id
      real(dp)                              :: sink_mass
      real(dp)                              :: mass_tot
+     real(dp)                              :: mass_cell
      integer                               :: clevel
      integer                               :: domain
      real(dp), dimension(:,:), allocatable :: uold
