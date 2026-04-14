@@ -1157,11 +1157,11 @@ subroutine subsub_drift(dt)
 
   !! DEBUG MODE FOR SELF-GRAVITY TEST
   !! )) DEBUGG HYDRO((         <- this is for grep
-  if(subsub_dev_hydroonly .eq. 1)then
-    call subsub_hydroRiemann_Rusanov_periodicBC(dt)
-  else
+  !if(subsub_dev_hydroonly .eq. 1)then
+  !  call subsub_hydroRiemann_Rusanov_periodicBC(dt)
+  !else
     call subsub_hydroRiemann_Rusanov(dt)
-  endif
+  !endif
     
 
   end select
@@ -1197,9 +1197,10 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
   integer :: ivar, i, j
   integer :: ix, iy, iz
   integer :: ii, xu, xd, yu, yd, zu, zd
-  real(dp) :: amaxL, amaxR, lam, ekin
+  integer :: ixu, ixd, iyu, iyd, izu, izd
+  real(dp) :: amaxL, amaxR, lam, ekin, bc_vv, bc_cs
   
-  real(dp), dimension(1:subsub_nhydro) :: FL, FR, Utmp
+  real(dp), dimension(1:subsub_nhydro) :: FL, FR, Utmp, bc_flux, bc_cons
   real(dp), dimension(1:2, 1:ndim) :: csarr_bc
   logical :: isodd
 
@@ -1415,6 +1416,366 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
   !$omp end do
 
   !! Solver
+!!----- RHEE -----
+!! Simpler version
+!!----------------
+!! Solver
+
+!!------------------------------------------------------
+!! X-axis
+!!------------------------------------------------------
+
+  !(left boundary)
+    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    do iz=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+  
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + 1
+      ixu = 1+1
+      ixd = 1-1
+
+      bc_vv = hbc(1,1,2,2)
+      bc_cs  = csarr_bc(1,1)
+      bc_flux(:) = hbc(1,1,:,3)
+      bc_cons(:) = hbc(1,1,:,1)
+
+      !! DEBUG MODE FOR SELF-GRAVITY TEST
+      !! )) DEBUGG HYDRO ((         <- this is for grep
+      if(subsub_dev_hydroonly .eq. 1)then
+        ixd = subsub_ngrid
+        bc_vv = subsub_hdummy(ixd,iy,iz,2,2)
+        bc_cs = subsub_csarr(ixd,iy,iz)
+        bc_flux(:) = subsub_hdummy(ixd,iy,iz,:,3)
+        bc_cons(:) = subsub_hdummy(ixd,iy,iz,:,1)
+      endif
+
+
+      amaxL = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(bc_vv) + bc_cs)
+      amaxR = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(ixu,iy,iz,2,2)) + subsub_csarr(ixu,iy,iz))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(1,iy,iz,ivar,3)) - &
+          0.5D0*amaxL*(subsub_hdummy(1,iy,iz,ivar,1) - bc_cons(ivar))
+
+        FR(ivar) = 0.5D0*(subsub_hdummy(1,iy,iz,ivar,3) + subsub_hdummy(ixu,iy,iz,ivar,3)) - &
+          0.5D0*amaxR*(subsub_hdummy(ixu,iy,iz,ivar,1) - subsub_hdummy(1,iy,iz,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+
+  !(interior)
+  do ix=2, subsub_ngrid-1
+    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, amaxL, amaxR, FL, FR)
+    do iy=1, subsub_ngrid
+    do iz=1, subsub_ngrid
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      ixu = ix+1
+      ixd = ix-1
+
+      amaxL = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ixd,iy,iz,2,2)) + subsub_csarr(ixd,iy,iz))
+      amaxR = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ixu,iy,iz,2,2)) + subsub_csarr(ixu,iy,iz))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ixd,iy,iz,ivar,3)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ixd,iy,iz,ivar,1))
+        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ixu,iy,iz,ivar,3)) - &
+          0.5D0*amaxR*(subsub_hdummy(ixu,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+  enddo
+
+  !(right boundary)
+    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    do iz=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+  
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + subsub_ngrid
+      ixu = subsub_ngrid+1
+      ixd = subsub_ngrid-1
+
+      bc_vv = hbc(2,1,2,2)
+      bc_cs  = csarr_bc(2,1)
+      bc_flux(:) = hbc(2,1,:,3)
+      bc_cons(:) = hbc(2,1,:,1)
+
+      !! DEBUG MODE FOR SELF-GRAVITY TEST
+      !! )) DEBUGG HYDRO ((         <- this is for grep
+      if(subsub_dev_hydroonly .eq. 1)then
+        ixu = 1
+        bc_vv = subsub_hdummy(ixu,iy,iz,2,2)
+        bc_cs = subsub_csarr(ixu,iy,iz)
+        bc_flux(:) = subsub_hdummy(ixu,iy,iz,:,3)
+        bc_cons(:) = subsub_hdummy(ixu,iy,iz,:,1)
+      endif
+
+      amaxL = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(subsub_hdummy(ixd,iy,iz,2,2)) + subsub_csarr(ixd,iy,iz))
+      amaxR = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(bc_vv) + bc_cs)
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,3) + subsub_hdummy(ixd,iy,iz,ivar,3)) - &
+          0.5D0*amaxL*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,1) - subsub_hdummy(ixd,iy,iz,ivar,1))
+        FR(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(subsub_ngrid,iy,iz,ivar,3)) - &
+          0.5D0*amaxR*(bc_cons(ivar) - subsub_hdummy(subsub_ngrid,iy,iz,ivar,1))
+      enddo
+
+
+      do ivar=1, 5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+
+    enddo
+    enddo
+    !$omp end do
+
+!!------------------------------------------------------
+!! Y-axis
+!!------------------------------------------------------
+  !(left boundary)
+    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    do iz=1, subsub_ngrid
+    do ix=1, subsub_ngrid
+  
+      ii = (iz-1)*subsub_ngrid2 + ix
+      iyu = 1+1
+      iyd = 1-1
+
+      bc_vv = hbc(1,2,3,2)
+      bc_cs  = csarr_bc(1,2)
+      bc_flux(:) = hbc(1,2,:,4)
+      bc_cons(:) = hbc(1,2,:,1)
+
+      !! DEBUG MODE FOR SELF-GRAVITY TEST
+      !! )) DEBUGG HYDRO ((         <- this is for grep
+      if(subsub_dev_hydroonly .eq. 1)then
+        iyd = subsub_ngrid
+        bc_vv = subsub_hdummy(ix,iyd,iz,3,2)
+        bc_cs = subsub_csarr(ix,iyd,iz)
+        bc_flux(:) = subsub_hdummy(ix,iyd,iz,:,4)
+        bc_cons(:) = subsub_hdummy(ix,iyd,iz,:,1)
+      endif
+
+
+      amaxL = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(bc_vv) + bc_cs)
+      amaxR = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,iyu,iz,3,2)) + subsub_csarr(ix,iyu,iz))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(ix,1,iz,ivar,4)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,1,iz,ivar,1) - bc_cons(ivar))
+
+        FR(ivar) = 0.5D0*(subsub_hdummy(ix,1,iz,ivar,4) + subsub_hdummy(ix,iyu,iz,ivar,4)) - &
+          0.5D0*amaxR*(subsub_hdummy(ix,iyu,iz,ivar,1) - subsub_hdummy(ix,1,iz,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+
+  !(interior)
+  do iy=2, subsub_ngrid-1
+    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, amaxL, amaxR, FL, FR)
+    do iz=1, subsub_ngrid
+    do ix=1, subsub_ngrid
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      iyu = iy+1
+      iyd = iy-1
+
+      amaxL = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iyd,iz,3,2)) + subsub_csarr(ix,iyd,iz))
+      amaxR = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iyu,iz,3,2)) + subsub_csarr(ix,iyu,iz))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iyd,iz,ivar,4)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iyd,iz,ivar,1))
+        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iyu,iz,ivar,4)) - &
+          0.5D0*amaxR*(subsub_hdummy(ix,iyu,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+  enddo
+
+  !(right boundary)
+    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    do iz=1, subsub_ngrid
+    do ix=1, subsub_ngrid
+  
+      ii = (iz-1)*subsub_ngrid2 + (subsub_ngrid-1)*subsub_ngrid + ix
+      iyu = subsub_ngrid+1
+      iyd = subsub_ngrid-1
+
+      bc_vv = hbc(2,2,3,2)
+      bc_cs  = csarr_bc(2,2)
+      bc_flux(:) = hbc(2,2,:,4)
+      bc_cons(:) = hbc(2,2,:,1)
+
+      !! DEBUG MODE FOR SELF-GRAVITY TEST
+      !! )) DEBUGG HYDRO ((         <- this is for grep
+      if(subsub_dev_hydroonly .eq. 1)then
+        iyu = 1
+        bc_vv = subsub_hdummy(ix,iyu,iz,3,2)
+        bc_cs = subsub_csarr(ix,iyu,iz)
+        bc_flux(:) = subsub_hdummy(ix,iyu,iz,:,4)
+        bc_cons(:) = subsub_hdummy(ix,iyu,iz,:,1)
+      endif
+
+
+      amaxL = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(subsub_hdummy(ix,iyd,iz,3,2)) + subsub_csarr(ix,iyd,iz))
+      amaxR = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(bc_vv) + bc_cs)
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,4) + subsub_hdummy(ix,iyd,iz,ivar,4)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,1) - subsub_hdummy(ix,iyd,iz,ivar,1))
+        FR(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(ix,subsub_ngrid,iz,ivar,4)) - &
+          0.5D0*amaxR*(bc_cons(ivar) - subsub_hdummy(ix,subsub_ngrid,iz,ivar,1))
+      enddo
+
+
+      do ivar=1, 5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+
+    enddo
+    enddo
+    !$omp end do
+!!------------------------------------------------------
+!! Z-axis
+!!------------------------------------------------------
+  !(left boundary)
+    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    do iy=1, subsub_ngrid
+    do ix=1, subsub_ngrid
+  
+      ii = (iy-1)*subsub_ngrid + ix
+      izu = 1+1
+      izd = 1-1
+
+      bc_vv = hbc(1,3,4,2)
+      bc_cs  = csarr_bc(1,3)
+      bc_flux(:) = hbc(1,3,:,5)
+      bc_cons(:) = hbc(1,3,:,1)
+
+      !! DEBUG MODE FOR SELF-GRAVITY TEST
+      !! )) DEBUGG HYDRO ((         <- this is for grep
+      if(subsub_dev_hydroonly .eq. 1)then
+        izd = subsub_ngrid
+        bc_vv = subsub_hdummy(ix,iy,izd,4,2)
+        bc_cs = subsub_csarr(ix,iy,izd)
+        bc_flux(:) = subsub_hdummy(ix,iy,izd,:,5)
+        bc_cons(:) = subsub_hdummy(ix,iy,izd,:,1)
+      endif
+
+      amaxL = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(bc_vv) + bc_cs)
+      amaxR = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,izu,4,2)) + subsub_csarr(ix,iy,izu))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(ix,iy,1,ivar,5)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,iy,1,ivar,1) - bc_cons(ivar))
+
+        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,1,ivar,5) + subsub_hdummy(ix,iy,izu,ivar,5)) - &
+          0.5D0*amaxR*(subsub_hdummy(ix,iy,izu,ivar,1) - subsub_hdummy(ix,iy,1,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+
+  !(interior)
+  do iz=2, subsub_ngrid-1
+    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, amaxL, amaxR, FL, FR)
+    do iy=1, subsub_ngrid
+    do ix=1, subsub_ngrid
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      izu = iz+1
+      izd = iz-1
+
+      amaxL = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,izd,4,2)) + subsub_csarr(ix,iy,izd))
+      amaxR = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,izu,4,2)) + subsub_csarr(ix,iy,izu))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,izd,ivar,5)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy,izd,ivar,1))
+        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,izu,ivar,5)) - &
+          0.5D0*amaxR*(subsub_hdummy(ix,iy,izu,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+  enddo
+
+  !(right boundary)
+    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    do iy=1, subsub_ngrid
+    do ix=1, subsub_ngrid
+  
+      ii = (subsub_ngrid-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      izu = subsub_ngrid+1
+      izd = subsub_ngrid-1
+
+      bc_vv = hbc(2,3,4,2)
+      bc_cs  = csarr_bc(2,3)
+      bc_flux(:) = hbc(2,3,:,5)
+      bc_cons(:) = hbc(2,3,:,1)
+
+      !! DEBUG MODE FOR SELF-GRAVITY TEST
+      !! )) DEBUGG HYDRO ((         <- this is for grep
+      if(subsub_dev_hydroonly .eq. 1)then
+        izu = 1
+        bc_vv = subsub_hdummy(ix,iy,izu,4,2)
+        bc_cs = subsub_csarr(ix,iy,izu)
+        bc_flux(:) = subsub_hdummy(ix,iy,izu,:,5)
+        bc_cons(:) = subsub_hdummy(ix,iy,izu,:,1)
+      endif
+
+
+      amaxL = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(subsub_hdummy(ix,iy,izd,4,2)) + subsub_csarr(ix,iy,izd))
+      amaxR = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(bc_vv) + bc_cs)
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,5) + subsub_hdummy(ix,iy,izd,ivar,5)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,1) - subsub_hdummy(ix,iy,izd,ivar,1))
+        FR(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(ix,iy,subsub_ngrid,ivar,5)) - &
+          0.5D0*amaxR*(bc_cons(ivar) - subsub_hdummy(ix,iy,subsub_ngrid,ivar,1))
+      enddo
+
+
+      do ivar=1, 5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+
+    enddo
+    enddo
+    !$omp end do
+  
+  return
+
+!!----- RHEE -----
+!! Solver in computationally efficient version below by minimizing flux calculations
+!! Test required
+!!----------------
 !!------------------------------------------------------
 !! X-axis
 !!------------------------------------------------------

@@ -816,7 +816,7 @@ subroutine subsub_updatedomain
 
               subsub_obj(myind)%hydro(j,1) = 1.0D0 * 1.0D0/subsub_dd(j)
               !if(ix.ge.20 .and. ix.lt.30) subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(2,1)
-              subsub_obj(myind)%hydro(j,2) = 1.0D-3*subsub_obj(myind)%hydro(j,1)!abs(subsub_obj(myind)%uold(2,2))
+              subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)!abs(subsub_obj(myind)%uold(2,2))
               subsub_obj(myind)%hydro(j,3) = 0.
               subsub_obj(myind)%hydro(j,4) = 0.
               subsub_obj(myind)%hydro(j,5) = 1.0D-10!subsub_obj(myind)%uold(2,5)
@@ -894,7 +894,7 @@ subroutine subsub_updatedomain
 
               subsub_obj(myind)%hydro(j,1) = 1.0D0 * 1.0D-5/subsub_dd(j)
               !if(ix.ge.20 .and. ix.lt.30) subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(2,1)
-              subsub_obj(myind)%hydro(j,2) = 1.0D-3*subsub_obj(myind)%hydro(j,1)!abs(subsub_obj(myind)%uold(2,2))
+              subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)!abs(subsub_obj(myind)%uold(2,2))
               subsub_obj(myind)%hydro(j,3) = 0.
               subsub_obj(myind)%hydro(j,4) = 0.
               subsub_obj(myind)%hydro(j,5) = 1.0D-10!subsub_obj(myind)%uold(2,5)
