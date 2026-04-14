@@ -199,7 +199,6 @@ subroutine subsub_cgkdk(objind)
 !endif
 !!$omp end single
 
-
 !if(mpinow-debugt .gt. 120.)then
 !  !$omp single
 !  write(*,*)'     myid         = ', myid
@@ -269,6 +268,26 @@ subroutine subsub_cgkdk(objind)
     enddo
     !$omp end do
 
+
+!$omp single
+if(subsub_obj(objind)%sink_id .eq. 3)then
+  write(*,*)'     niter        = ', subsub_nstep
+  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
+  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
+
+  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
+  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
+
+  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
+  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
+
+  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
+  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
+
+  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
+  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
+endif
+!$omp end single
 
 !!-----------------------------------------------------------------
 !! Compute Phi by CG (rho_n -> phi_n)
@@ -1018,10 +1037,16 @@ subroutine subsub_kick(dt)
   implicit none
 
   real(dp) :: dt
-  
+
   !! Local variables
   integer :: i
   real(dp) :: vx, vy, vz, vxn, vyn, vzn, rho, ekin_floor
+
+  !! DEBUG MODE FOR SELF-GRAVITY TEST
+  !! )) DEBUGG HYDRO((         <- this is for grep
+  if(subsub_dev_hydroonly .eq. 1) then
+    return
+  endif
 
   !$omp do private(vx, vy, vz, vxn, vyn, vzn, rho, ekin_floor)
   do i=1, subsub_nn
@@ -1054,9 +1079,11 @@ end subroutine subsub_kick
 !################################################################
 !################################################################
 subroutine subsub_drift(dt)
+  use amr_commons
   use subsub_commons
   use subsub_parameters
   use hydro_parameters, ONLY:gamma
+  use, intrinsic :: ieee_arithmetic
   implicit none
 
   real(dp) :: dt
@@ -1070,7 +1097,7 @@ subroutine subsub_drift(dt)
 
 
   !! copy to old arrays & save primitive variables
-  !$omp do collapse(2) private(ekin, ii, ix, iy, iz, Utmp)
+  !$omp do collapse(2) private(ekin, ii, ix, iy, iz, ivar, Utmp)
   do iz=1, subsub_ngrid
   do iy=1, subsub_ngrid
   do ix=1, subsub_ngrid
@@ -1104,12 +1131,21 @@ subroutine subsub_drift(dt)
       subsub_hdummy(ix,iy,iz,5,2) = 0.0D0
     endif
 
+    do ivar=1, subsub_nhydro
+      if(ieee_is_nan(subsub_hydro(ii,ivar)))then
+        write(*,*) ix, iy, iz, ivar, subsub_hydro(ii,ivar)
+      endif
+
+      if(.not. ieee_is_finite(subsub_hydro(ii,ivar)))then
+        write(*,*) ix, iy, iz, ivar, subsub_hydro(ii,ivar)
+      endif
+    enddo
 
   enddo
   enddo
   enddo
   !$omp end do
-  
+
 
   select case(subsub_RiemannType)
   case(1)
@@ -1664,6 +1700,7 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
   use subsub_commons
   use subsub_parameters
   use hydro_parameters, ONLY:gamma
+  use, intrinsic :: ieee_arithmetic
   implicit none
 
   real(dp) :: dt
@@ -1672,6 +1709,7 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
   integer :: ivar, i, j
   integer :: ix, iy, iz
   integer :: ii, xu, xd, yu, yd, zu, zd
+  integer :: ixd, ixu, iyd, iyu, izd, izu
   real(dp) :: amaxL, amaxR, lam, ekin
   
   real(dp), dimension(1:subsub_nhydro) :: FL, FR, Utmp
@@ -1715,6 +1753,7 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
     enddo
     enddo
     enddo
+    !$omp end do
   endif
 
 
@@ -1746,15 +1785,108 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
   !$omp end do
 
   !! Solver
+  do ix=1, subsub_ngrid
+    !$omp do collapse(2) private(ii, ixu, ixd, ivar, iy, iz, amaxL, amaxR, FL, FR, Utmp)
+    do iz=1, subsub_ngrid
+    do iy=1, subsub_ngrid
+  
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      ixu = ix+1
+      ixd = ix-1
+
+      if(ix.eq.1) ixd = subsub_ngrid
+      if(ix.eq.subsub_ngrid) ixu = 1
+
+      amaxL = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ixd,iy,iz,2,2)) + subsub_csarr(ixd,iy,iz))
+      amaxR = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ixu,iy,iz,2,2)) + subsub_csarr(ixu,iy,iz))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ixd,iy,iz,ivar,3)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ixd,iy,iz,ivar,1))
+        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ixu,iy,iz,ivar,3)) - &
+          0.5D0*amaxR*(subsub_hdummy(ixu,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+  enddo
+
+  do iy=1, subsub_ngrid
+    !$omp do collapse(2) private(ii, iyu, iyd, ivar, ix, iz, amaxL, amaxR, FL, FR, Utmp)
+    do iz=1, subsub_ngrid
+    do ix=1, subsub_ngrid
+  
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      iyu = iy+1
+      iyd = iy-1
+
+      if(iy.eq.1) iyd = subsub_ngrid
+      if(iy.eq.subsub_ngrid) iyu = 1
+
+      amaxL = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iyd,iz,3,2)) + subsub_csarr(ix,iyd,iz))
+      amaxR = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iyu,iz,3,2)) + subsub_csarr(ix,iyu,iz))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iyd,iz,ivar,4)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iyd,iz,ivar,1))
+        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iyu,iz,ivar,4)) - &
+          0.5D0*amaxR*(subsub_hdummy(ix,iyu,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+  enddo
+
+  do iz=1, subsub_ngrid
+    !$omp do collapse(2) private(ii, izu, izd, ivar, ix, iy, amaxL, amaxR, FL, FR, Utmp)
+    do iy=1, subsub_ngrid
+    do ix=1, subsub_ngrid
+  
+      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+      izu = iz+1
+      izd = iz-1
+
+      if(iz.eq.1) izd = subsub_ngrid
+      if(iz.eq.subsub_ngrid) izu = 1
+
+      amaxL = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,izd,4,2)) + subsub_csarr(ix,iy,izd))
+      amaxR = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,izu,4,2)) + subsub_csarr(ix,iy,izu))
+
+      do ivar=1,5
+        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,izd,ivar,5)) - &
+          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy,izd,ivar,1))
+        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,izu,ivar,5)) - &
+          0.5D0*amaxR*(subsub_hdummy(ix,iy,izu,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+      enddo
+
+      do ivar=1,5
+        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+    enddo
+    enddo
+    !$omp end do
+  enddo
+  return
+
+
 !!------------------------------------------------------
 !! X-axis
 !!------------------------------------------------------
   !! (left boundary)
-  !$omp do collapse(2) private(ii, xu, ivar, iy, iz, amaxL, amaxR, FL, FR, Utmp)
+  !$omp do collapse(2) private(ii, xu, xd, ivar, iy, iz, amaxL, amaxR, FL, FR, Utmp)
   do iy=1, subsub_ngrid
   do iz=1, subsub_ngrid
     ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + 1
     xu = ii + 1
+    xd = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + subsub_ngrid
 
     amaxL = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz))
     amaxR = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(2,iy,iz,2,2)) + subsub_csarr(2,iy,iz))
@@ -1768,13 +1900,15 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
 
     
     do ivar=1,5
+      subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam * FL(ivar)
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
     enddo
   enddo
   enddo
   !$omp end do
- 
+
+
   !! (interior) 
   do ix=3, subsub_ngrid-1, 2
     !$omp do collapse(2) private(ii, xu, xd, ivar, iy, iz, amaxL, amaxR, FL, FR)
@@ -1798,6 +1932,17 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
         subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam * FL(ivar)
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
         subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
+if(ieee_is_nan(subsub_hydro(xd,ivar)))then
+  write(*,*) ix, iy, iz, 'xd', myid
+  write(*,*) 'FL = ', FL(ivar)
+  write(*,*) 'amaxL = ', amaxL
+  write(*,*) 'subsub_hdummy = ', subsub_hdummy(ix,iy,iz,1,1), subsub_hdummy(ix-1,iy,iz,1,1), subsub_hdummy(ix+1,iy,iz,1,1)
+  write(*,*) 'subsub_hdummy = ', subsub_hdummy(ix,iy,iz,2,2), subsub_hdummy(ix-1,iy,iz,2,2), subsub_hdummy(ix+1,iy,iz,2,2)
+  write(*,*) 'subsub_csarr = ', subsub_csarr(ix,iy,iz), subsub_csarr(ix-1,iy,iz), subsub_csarr(ix+1,iy,iz)
+  write(*,*) 'FR = ', FR(ivar)
+  stop
+endif
+
       enddo
     enddo
     enddo
@@ -1805,11 +1950,12 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
   enddo
 
   !! (right boundary)
-  !$omp do collapse(2) private(ii, xd, ivar, iy, iz, amaxL, amaxR, FL, FR)
+  !$omp do collapse(2) private(ii, xu, xd, ivar, iy, iz, amaxL, amaxR, FL, FR)
   do iy=1, subsub_ngrid
   do iz=1, subsub_ngrid
     ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + subsub_ngrid
     xd = ii - 1
+    xu = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + 1
 
     amaxL = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(subsub_hdummy(subsub_ngrid-1,iy,iz,2,2)) + subsub_csarr(subsub_ngrid-1,iy,iz))
     amaxR = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz))
@@ -1822,6 +1968,7 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
     enddo
 
     do ivar=1, 5
+      subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       if(isodd)then
         subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam*FL(ivar)
@@ -1835,11 +1982,12 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
 !! Y-axis
 !!------------------------------------------------------
   !! (left boundary)
-  !$omp do collapse(2) private(ii, yu, ivar, ix, iz, amaxL, amaxR, FL, FR)
+  !$omp do collapse(2) private(ii, yu, yd, ivar, ix, iz, amaxL, amaxR, FL, FR)
   do ix=1, subsub_ngrid
   do iz=1, subsub_ngrid
     ii = (iz-1)*subsub_ngrid2 + ix
     yu = ii + subsub_ngrid
+    yd = (iz-1)*subsub_ngrid2 + ix + (subsub_ngrid-1)*subsub_ngrid
 
     amaxL = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz))
     amaxR = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,2,iz,3,2)) + subsub_csarr(ix,2,iz))
@@ -1853,6 +2001,7 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
 
     
     do ivar=1,5
+      subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam * FL(ivar)
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
     enddo
@@ -1890,11 +2039,12 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
   enddo
 
   !! (right boundary)
-  !$omp do collapse(2) private(ii, yd, ivar, ix, iz, amaxL, amaxR, FL, FR)
+  !$omp do collapse(2) private(ii, yu, yd, ivar, ix, iz, amaxL, amaxR, FL, FR)
   do iz=1, subsub_ngrid
   do ix=1, subsub_ngrid
     ii = (iz-1)*subsub_ngrid2 + (subsub_ngrid-1)*subsub_ngrid + ix
     yd = ii - subsub_ngrid
+    yu = (iz-1)*subsub_ngrid2 + ix
 
     amaxL = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(subsub_hdummy(ix,subsub_ngrid-1,iz,3,2)) + subsub_csarr(ix,subsub_ngrid-1,iz))
     amaxR = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz))
@@ -1911,20 +2061,23 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
       if(isodd)then
         subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam*FL(ivar)
       endif
+      subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam*FR(ivar)
     enddo
   enddo
   enddo
   !$omp end do
 
+
 !!------------------------------------------------------
 !! Z-axis
 !!------------------------------------------------------
   !! (left boundary)
-  !$omp do collapse(2) private(ii, zu, ivar, ix, iy, amaxL, amaxR, FL, FR)
+  !$omp do collapse(2) private(ii, zu, zd, ivar, ix, iy, amaxL, amaxR, FL, FR)
   do iy=1, subsub_ngrid
   do ix=1, subsub_ngrid
     ii = (iy-1)*subsub_ngrid + ix
     zu = ii + subsub_ngrid2
+    zd = (subsub_ngrid-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
 
     amaxL = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid))
     amaxR = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,2,4,2)) + subsub_csarr(ix,iy,2))
@@ -1938,13 +2091,14 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
 
     
     do ivar=1,5
+      subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam * FL(ivar)
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)
     enddo
   enddo
   enddo
   !$omp end do
- 
+
   !! (interior) 
   do iz=3, subsub_ngrid-1, 2
     !$omp do collapse(2) private(ii, zu, zd, ivar, ix, iy, amaxL, amaxR, FL, FR)
@@ -1975,11 +2129,12 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
   enddo
 
   !! (right boundary)
-  !$omp do collapse(2) private(ii, zd, ivar, ix, iy, amaxL, amaxR, FL, FR)
+  !$omp do collapse(2) private(ii, zu, zd, ivar, ix, iy, amaxL, amaxR, FL, FR)
   do iy=1, subsub_ngrid
   do ix=1, subsub_ngrid
     ii = (subsub_ngrid-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
     zd = ii - subsub_ngrid2
+    zu = (iy-1)*subsub_ngrid + ix
 
     amaxL = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(subsub_hdummy(ix,iy,subsub_ngrid-1,4,2)) + subsub_csarr(ix,iy,subsub_ngrid-1))
     amaxR = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1))
@@ -1996,10 +2151,12 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
       if(isodd)then
         subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam*FL(ivar)
       endif
+      subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam*FR(ivar)
     enddo
   enddo
   enddo
   !$omp end do
+
 end subroutine
 !################################################################
 !################################################################

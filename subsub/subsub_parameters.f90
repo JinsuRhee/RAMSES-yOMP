@@ -32,7 +32,7 @@ module subsub_parameters
   
   !! DEV
   integer :: subsub_dev_icsphere = 0
-  integer :: subsub_dev_gravonly = 1
+  integer :: subsub_dev_gravonly = 0
   integer :: subsub_dev_hydroonly = 1
 
 end module subsub_parameters
