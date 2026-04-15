@@ -165,6 +165,37 @@ subroutine subsub_cgkdk(objind)
     fact2 = 0.0D0
   endif
   
+  !! DEBUG MODE FOR SELF-GRAVITY TEST
+  !! )) DEBUGG GRAV+HYDRO((         <- this is for grep
+  if(subsub_dev_gravhydro .eq. 1)then
+    do i=1, 2
+      do j=1,3
+        subsub_hydrobc(i,j,1) = subsub_dfloor
+        subsub_hydrobc(i,j,2) = 0.0D0
+        subsub_hydrobc(i,j,3) = 0.0D0
+        subsub_hydrobc(i,j,4) = 0.0D0
+        subsub_hydrobc(i,j,5) = 0.0D0
+      enddo
+    enddo
+
+    fact2 = 0.0D0
+    subsub_debugtag = -1
+  endif
+
+  !! DEBUG MODE FOR SELF-GRAVITY TEST
+  !! )) DEBUGG GRAV+HYDRO+BH((         <- this is for grep
+  if(subsub_dev_gravhydrobh .eq. 1)then
+    do i=1, 2
+      do j=1,3
+        subsub_hydrobc(i,j,1) = subsub_dfloor
+        subsub_hydrobc(i,j,2) = 0.0D0
+        subsub_hydrobc(i,j,3) = 0.0D0
+        subsub_hydrobc(i,j,4) = 0.0D0
+        subsub_hydrobc(i,j,5) = 0.0D0
+      enddo
+    enddo
+  endif
+  
 
   do i=1,2
     do j=1,3
@@ -271,6 +302,7 @@ subroutine subsub_cgkdk(objind)
 
 !$omp single
 if(subsub_obj(objind)%sink_id .eq. 3)then
+  subsub_debugtag = 1
   write(*,*)'     niter        = ', subsub_nstep
   write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
   write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
@@ -558,6 +590,27 @@ endif
 !!-----------------------------------------------------------------
     call subsub_kick(subsub_dt/2.0D0)
 
+!$omp single
+if(subsub_obj(objind)%sink_id .eq. 3)then
+  write(*,*)'         first kick'
+  write(*,*)'     niter        = ', subsub_nstep
+  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
+  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
+
+  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
+  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
+
+  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
+  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
+
+  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
+  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
+
+  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
+  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
+endif
+!$omp end single
+
 #ifndef WITHOUTMPI
     !$omp single
     subsub_tcheck_cg(4) = subsub_tcheck_cg(4) + MPI_WTIME() - mpinow
@@ -570,6 +623,27 @@ endif
 !! Drift (U_n -> U_n+1)
 !!-----------------------------------------------------------------
     call subsub_drift(subsub_dt)
+
+!$omp single
+if(subsub_obj(objind)%sink_id .eq. 3)then
+  write(*,*)'            after drift'
+  write(*,*)'     niter        = ', subsub_nstep
+  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
+  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
+
+  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
+  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
+
+  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
+  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
+
+  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
+  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
+
+  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
+  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
+endif
+!$omp end single
 
     !$omp single
 #ifndef WITHOUTMPI
@@ -649,6 +723,13 @@ endif
     subsub_obj(objind)%mass_tot = mtot_now
     !$omp end single
 
+!$omp single
+if(subsub_obj(objind)%sink_id .eq. 3)then
+  write(*,*)'              niter        = ', subsub_nstep
+  write(*,*)'              maxrho       = ', maxval(subsub_hydro(:,1))
+  write(*,*)'              minrho       = ', minval(subsub_hydro(:,1))
+endif
+!$omp end single
 !!-----------------------------------------------------------------
 !! Main Loop Control
 !!-----------------------------------------------------------------
@@ -1131,16 +1212,6 @@ subroutine subsub_drift(dt)
       subsub_hdummy(ix,iy,iz,5,2) = 0.0D0
     endif
 
-    do ivar=1, subsub_nhydro
-      if(ieee_is_nan(subsub_hydro(ii,ivar)))then
-        write(*,*) ix, iy, iz, ivar, subsub_hydro(ii,ivar)
-      endif
-
-      if(.not. ieee_is_finite(subsub_hydro(ii,ivar)))then
-        write(*,*) ix, iy, iz, ivar, subsub_hydro(ii,ivar)
-      endif
-    enddo
-
   enddo
   enddo
   enddo
@@ -1153,22 +1224,14 @@ subroutine subsub_drift(dt)
 !! Rusanov Solver
 !!-----------------------------------------------------------------
 
-  !call subsub_hydroRiemann_Rusanov(dt)
-
-  !! DEBUG MODE FOR SELF-GRAVITY TEST
-  !! )) DEBUGG HYDRO((         <- this is for grep
-  !if(subsub_dev_hydroonly .eq. 1)then
-  !  call subsub_hydroRiemann_Rusanov_periodicBC(dt)
-  !else
-    call subsub_hydroRiemann_Rusanov(dt)
-  !endif
-    
+  call subsub_hydroRiemann_Rusanov(dt)
 
   end select
 
 
   !$omp do private(Utmp, ivar)
   do i=1, subsub_nn
+
     do ivar=1, subsub_nhydro
       Utmp(ivar) = subsub_hydro(i,ivar)
     enddo
@@ -1198,11 +1261,11 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
   integer :: ix, iy, iz
   integer :: ii, xu, xd, yu, yd, zu, zd
   integer :: ixu, ixd, iyu, iyd, izu, izd
-  real(dp) :: amaxL, amaxR, lam, ekin, bc_vv, bc_cs
+  real(dp) :: amaxL, amaxR, lam, ekin, bc_vv, bc_cs, drho, dfac, pnew
   
   real(dp), dimension(1:subsub_nhydro) :: FL, FR, Utmp, bc_flux, bc_cons
   real(dp), dimension(1:2, 1:ndim) :: csarr_bc
-  logical :: isodd
+  logical :: isodd, okay
 
 
   !1 conservative old
@@ -1426,7 +1489,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
 !!------------------------------------------------------
 
   !(left boundary)
-    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, Utmp, okay, pnew, dfac, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
     do iz=1, subsub_ngrid
     do iy=1, subsub_ngrid
   
@@ -1453,7 +1516,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(bc_vv) + bc_cs)
       amaxR = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(ixu,iy,iz,2,2)) + subsub_csarr(ixu,iy,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(1,iy,iz,ivar,3)) - &
           0.5D0*amaxL*(subsub_hdummy(1,iy,iz,ivar,1) - bc_cons(ivar))
 
@@ -1461,16 +1524,57 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
           0.5D0*amaxR*(subsub_hdummy(ixu,iy,iz,ivar,1) - subsub_hdummy(1,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+
+
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
+      enddo
+
     enddo
     enddo
     !$omp end do
 
   !(interior)
   do ix=2, subsub_ngrid-1
-    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, Utmp, okay, pnew, dfac, amaxL, amaxR, FL, FR)
     do iy=1, subsub_ngrid
     do iz=1, subsub_ngrid
       ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
@@ -1480,23 +1584,63 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ixd,iy,iz,2,2)) + subsub_csarr(ixd,iy,iz))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ixu,iy,iz,2,2)) + subsub_csarr(ixu,iy,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ixd,iy,iz,ivar,3)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ixd,iy,iz,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ixu,iy,iz,ivar,3)) - &
           0.5D0*amaxR*(subsub_hdummy(ixu,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
+      enddo
+
+
     enddo
     enddo
     !$omp end do
   enddo
 
   !(right boundary)
-    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, ixu, ixd, iy, iz, Utmp, okay, pnew, dfac, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
     do iz=1, subsub_ngrid
     do iy=1, subsub_ngrid
   
@@ -1522,7 +1666,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(subsub_hdummy(ixd,iy,iz,2,2)) + subsub_csarr(ixd,iy,iz))
       amaxR = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(bc_vv) + bc_cs)
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,3) + subsub_hdummy(ixd,iy,iz,ivar,3)) - &
           0.5D0*amaxL*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,1) - subsub_hdummy(ixd,iy,iz,ivar,1))
         FR(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(subsub_ngrid,iy,iz,ivar,3)) - &
@@ -1530,19 +1674,58 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       enddo
 
 
-      do ivar=1, 5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
       enddo
 
     enddo
     enddo
     !$omp end do
 
+
 !!------------------------------------------------------
 !! Y-axis
 !!------------------------------------------------------
   !(left boundary)
-    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, Utmp, okay, pnew, dfac, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
     do iz=1, subsub_ngrid
     do ix=1, subsub_ngrid
   
@@ -1569,7 +1752,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(bc_vv) + bc_cs)
       amaxR = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,iyu,iz,3,2)) + subsub_csarr(ix,iyu,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(ix,1,iz,ivar,4)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,1,iz,ivar,1) - bc_cons(ivar))
 
@@ -1577,16 +1760,59 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
           0.5D0*amaxR*(subsub_hdummy(ix,iyu,iz,ivar,1) - subsub_hdummy(ix,1,iz,ivar,1))
       enddo
 
-      do ivar=1,5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+
+      !! Avoid Negative Density
+
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
+      enddo
+
     enddo
     enddo
     !$omp end do
 
+
   !(interior)
   do iy=2, subsub_ngrid-1
-    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, Utmp, okay, pnew, dfac, amaxL, amaxR, FL, FR)
     do iz=1, subsub_ngrid
     do ix=1, subsub_ngrid
       ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
@@ -1596,23 +1822,63 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iyd,iz,3,2)) + subsub_csarr(ix,iyd,iz))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iyu,iz,3,2)) + subsub_csarr(ix,iyu,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iyd,iz,ivar,4)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iyd,iz,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iyu,iz,ivar,4)) - &
           0.5D0*amaxR*(subsub_hdummy(ix,iyu,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
+      enddo
+
     enddo
     enddo
     !$omp end do
   enddo
 
+
   !(right boundary)
-    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, iyu, iyd, ix, iz, Utmp, okay, pnew, dfac, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
     do iz=1, subsub_ngrid
     do ix=1, subsub_ngrid
   
@@ -1639,7 +1905,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(subsub_hdummy(ix,iyd,iz,3,2)) + subsub_csarr(ix,iyd,iz))
       amaxR = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(bc_vv) + bc_cs)
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,4) + subsub_hdummy(ix,iyd,iz,ivar,4)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,1) - subsub_hdummy(ix,iyd,iz,ivar,1))
         FR(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(ix,subsub_ngrid,iz,ivar,4)) - &
@@ -1647,18 +1913,57 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       enddo
 
 
-      do ivar=1, 5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
       enddo
 
     enddo
     enddo
     !$omp end do
+
 !!------------------------------------------------------
 !! Z-axis
 !!------------------------------------------------------
   !(left boundary)
-    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, Utmp, okay, pnew, dfac, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
     do iy=1, subsub_ngrid
     do ix=1, subsub_ngrid
   
@@ -1684,7 +1989,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(bc_vv) + bc_cs)
       amaxR = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,izu,4,2)) + subsub_csarr(ix,iy,izu))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(ix,iy,1,ivar,5)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,1,ivar,1) - bc_cons(ivar))
 
@@ -1692,16 +1997,56 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
           0.5D0*amaxR*(subsub_hdummy(ix,iy,izu,ivar,1) - subsub_hdummy(ix,iy,1,ivar,1))
       enddo
 
-      do ivar=1,5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
+      enddo
+
     enddo
     enddo
     !$omp end do
 
+
   !(interior)
   do iz=2, subsub_ngrid-1
-    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, Utmp, okay, pnew, dfac, amaxL, amaxR, FL, FR)
     do iy=1, subsub_ngrid
     do ix=1, subsub_ngrid
       ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
@@ -1711,23 +2056,62 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,izd,4,2)) + subsub_csarr(ix,iy,izd))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,izu,4,2)) + subsub_csarr(ix,iy,izu))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,izd,ivar,5)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy,izd,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,izu,ivar,5)) - &
           0.5D0*amaxR*(subsub_hdummy(ix,iy,izu,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
+      enddo
+
     enddo
     enddo
     !$omp end do
   enddo
 
   !(right boundary)
-    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
+    !$omp do collapse(2) private(ii, ivar, izu, izd, ix, iy, Utmp, okay, pnew, dfac, bc_vv, bc_cs, bc_flux, bc_cons, amaxL, amaxR, FL, FR)
     do iy=1, subsub_ngrid
     do ix=1, subsub_ngrid
   
@@ -1754,7 +2138,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(subsub_hdummy(ix,iy,izd,4,2)) + subsub_csarr(ix,iy,izd))
       amaxR = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(bc_vv) + bc_cs)
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,5) + subsub_hdummy(ix,iy,izd,ivar,5)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,1) - subsub_hdummy(ix,iy,izd,ivar,1))
         FR(ivar) = 0.5D0*(bc_flux(ivar) + subsub_hdummy(ix,iy,subsub_ngrid,ivar,5)) - &
@@ -1762,14 +2146,53 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       enddo
 
 
-      do ivar=1, 5
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      !! Before update, check the negative density & pressure
+      do ivar=1,subsub_nhydro
+        Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+      enddo
+
+      okay = .true.
+      if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+      pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+      if(pnew .lt. subsub_pfloor) okay=.false.
+
+      if(.not. okay)then
+        !!----- RHEE -----
+        !! Not physical, but limit negative pressure and density
+        dfac = 0.5D0
+
+        do
+          do ivar=1,subsub_nhydro
+            Utmp(ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))*dfac
+          enddo
+
+          okay = .true.
+          if(Utmp(1) .lt. subsub_dfloor) okay=.false.
+          pnew = (Utmp(5) - 0.5D0/max(Utmp(1),subsub_dfloor)*(Utmp(2)**2 + Utmp(3)**2 + Utmp(4)**2))*(gamma - 1.0D0)
+          if(pnew .lt. subsub_pfloor) okay=.false.
+
+          if(.not.okay) dfac = dfac * 0.5D0
+
+          if(okay) exit
+          if(dfac .lt. 1.0D-12)then !! fail to update this cell
+            do ivar=1,subsub_nhydro
+              Utmp(ivar) = subsub_hydro(ii,ivar)
+            enddo
+            exit
+          endif
+        enddo
+      endif
+
+      !! Update
+      do ivar=1,subsub_nhydro
+        subsub_hydro(ii,ivar) = Utmp(ivar)
       enddo
 
     enddo
     enddo
     !$omp end do
-  
+
+
   return
 
 !!----- RHEE -----
@@ -1789,7 +2212,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
     amaxL = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(hbc(1,1,2,2)) + csarr_bc(1,1))
     amaxR = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(2,iy,iz,2,2)) + subsub_csarr(2,iy,iz))
 
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       FL(ivar) = 0.5D0*(hbc(1,1,ivar,3) + subsub_hdummy(1,iy,iz,ivar,3)) - &
         0.5D0*amaxL*(subsub_hdummy(1,iy,iz,ivar,1) - hbc(1,1,ivar,1))
       FR(ivar) = 0.5D0*(subsub_hdummy(1,iy,iz,ivar,3) + subsub_hdummy(2,iy,iz,ivar,3)) - &
@@ -1797,7 +2220,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
     enddo
 
     
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
     enddo
@@ -1817,14 +2240,14 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix-1,iy,iz,2,2)) + subsub_csarr(ix-1,iy,iz))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix+1,iy,iz,2,2)) + subsub_csarr(ix+1,iy,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ix-1,iy,iz,ivar,3)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix-1,iy,iz,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ix+1,iy,iz,ivar,3)) - &
           0.5D0*amaxR*(subsub_hdummy(ix+1,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam * FL(ivar)
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
         subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
@@ -1874,7 +2297,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
     amaxL = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(hbc(1,2,3,2)) + csarr_bc(1,2))
     amaxR = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,2,iz,3,2)) + subsub_csarr(ix,2,iz))
 
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       FL(ivar) = 0.5D0*(hbc(1,2,ivar,4) + subsub_hdummy(ix,1,iz,ivar,4)) - &
         0.5D0*amaxL*(subsub_hdummy(ix,1,iz,ivar,1) - hbc(1,2,ivar,1))
       FR(ivar) = 0.5D0*(subsub_hdummy(ix,1,iz,ivar,4) + subsub_hdummy(ix,2,iz,ivar,4)) - &
@@ -1882,7 +2305,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
     enddo
 
     
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
     enddo
@@ -1902,14 +2325,14 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy-1,iz,3,2)) + subsub_csarr(ix,iy-1,iz))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy+1,iz,3,2)) + subsub_csarr(ix,iy+1,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iy-1,iz,ivar,4)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy-1,iz,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iy+1,iz,ivar,4)) - &
           0.5D0*amaxR*(subsub_hdummy(ix,iy+1,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam * FL(ivar)
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
         subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
@@ -1959,7 +2382,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
     amaxL = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(hbc(1,3,4,2)) + csarr_bc(1,3))
     amaxR = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,2,4,2)) + subsub_csarr(ix,iy,2))
 
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       FL(ivar) = 0.5D0*(hbc(1,3,ivar,5) + subsub_hdummy(ix,iy,1,ivar,5)) - &
         0.5D0*amaxL*(subsub_hdummy(ix,iy,1,ivar,1) - hbc(1,3,ivar,1))
       FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,1,ivar,5) + subsub_hdummy(ix,iy,2,ivar,5)) - &
@@ -1967,7 +2390,7 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
     enddo
 
     
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)
     enddo
@@ -1987,14 +2410,14 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,iz-1,4,2)) + subsub_csarr(ix,iy,iz-1))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,iz+1,4,2)) + subsub_csarr(ix,iy,iz+1))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,iz-1,ivar,5)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz-1,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,iz+1,ivar,5)) - &
           0.5D0*amaxR*(subsub_hdummy(ix,iy,iz+1,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam * FL(ivar)
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
         subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)
@@ -2161,14 +2584,14 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ixd,iy,iz,2,2)) + subsub_csarr(ixd,iy,iz))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ixu,iy,iz,2,2)) + subsub_csarr(ixu,iy,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ixd,iy,iz,ivar,3)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ixd,iy,iz,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ixu,iy,iz,ivar,3)) - &
           0.5D0*amaxR*(subsub_hdummy(ixu,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
     enddo
@@ -2191,14 +2614,14 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iyd,iz,3,2)) + subsub_csarr(ix,iyd,iz))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iyu,iz,3,2)) + subsub_csarr(ix,iyu,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iyd,iz,ivar,4)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iyd,iz,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iyu,iz,ivar,4)) - &
           0.5D0*amaxR*(subsub_hdummy(ix,iyu,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
     enddo
@@ -2221,14 +2644,14 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,izd,4,2)) + subsub_csarr(ix,iy,izd))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,izu,4,2)) + subsub_csarr(ix,iy,izu))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,izd,ivar,5)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy,izd,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,izu,ivar,5)) - &
           0.5D0*amaxR*(subsub_hdummy(ix,iy,izu,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       enddo
     enddo
@@ -2252,7 +2675,7 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
     amaxL = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz))
     amaxR = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(2,iy,iz,2,2)) + subsub_csarr(2,iy,iz))
 
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       FL(ivar) = 0.5D0*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,3) + subsub_hdummy(1,iy,iz,ivar,3)) - &
         0.5D0*amaxL*(subsub_hdummy(1,iy,iz,ivar,1) - subsub_hdummy(subsub_ngrid,iy,iz,ivar,1))
       FR(ivar) = 0.5D0*(subsub_hdummy(1,iy,iz,ivar,3) + subsub_hdummy(2,iy,iz,ivar,3)) - &
@@ -2260,7 +2683,7 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
     enddo
 
     
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam * FL(ivar)
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
@@ -2282,14 +2705,14 @@ subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix-1,iy,iz,2,2)) + subsub_csarr(ix-1,iy,iz))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix+1,iy,iz,2,2)) + subsub_csarr(ix+1,iy,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ix-1,iy,iz,ivar,3)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix-1,iy,iz,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ix+1,iy,iz,ivar,3)) - &
           0.5D0*amaxR*(subsub_hdummy(ix+1,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam * FL(ivar)
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
         subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
@@ -2353,7 +2776,7 @@ endif
     amaxL = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz))
     amaxR = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,2,iz,3,2)) + subsub_csarr(ix,2,iz))
 
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       FL(ivar) = 0.5D0*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,4) + subsub_hdummy(ix,1,iz,ivar,4)) - &
         0.5D0*amaxL*(subsub_hdummy(ix,1,iz,ivar,1) - subsub_hdummy(ix,subsub_ngrid,iz,ivar,1))
       FR(ivar) = 0.5D0*(subsub_hdummy(ix,1,iz,ivar,4) + subsub_hdummy(ix,2,iz,ivar,4)) - &
@@ -2361,7 +2784,7 @@ endif
     enddo
 
     
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam * FL(ivar)
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
@@ -2382,14 +2805,14 @@ endif
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy-1,iz,3,2)) + subsub_csarr(ix,iy-1,iz))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy+1,iz,3,2)) + subsub_csarr(ix,iy+1,iz))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iy-1,iz,ivar,4)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy-1,iz,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iy+1,iz,ivar,4)) - &
           0.5D0*amaxR*(subsub_hdummy(ix,iy+1,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam * FL(ivar)
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
         subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
@@ -2443,7 +2866,7 @@ endif
     amaxL = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid))
     amaxR = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,2,4,2)) + subsub_csarr(ix,iy,2))
 
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,5) + subsub_hdummy(ix,iy,1,ivar,5)) - &
         0.5D0*amaxL*(subsub_hdummy(ix,iy,1,ivar,1) - subsub_hdummy(ix,iy,subsub_ngrid,ivar,1))
       FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,1,ivar,5) + subsub_hdummy(ix,iy,2,ivar,5)) - &
@@ -2451,7 +2874,7 @@ endif
     enddo
 
     
-    do ivar=1,5
+    do ivar=1,subsub_nhydro
       subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam * FL(ivar)
       subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
       subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)
@@ -2472,14 +2895,14 @@ endif
       amaxL = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,iz-1,4,2)) + subsub_csarr(ix,iy,iz-1))
       amaxR = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,iz+1,4,2)) + subsub_csarr(ix,iy,iz+1))
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,iz-1,ivar,5)) - &
           0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz-1,ivar,1))
         FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,iz+1,ivar,5)) - &
           0.5D0*amaxR*(subsub_hdummy(ix,iy,iz+1,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
       enddo
 
-      do ivar=1,5
+      do ivar=1,subsub_nhydro
         subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam * FL(ivar)
         subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
         subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)

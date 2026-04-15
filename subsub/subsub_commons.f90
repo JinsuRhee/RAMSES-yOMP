@@ -60,7 +60,7 @@ module subsub_commons
 
   real(dp), dimension(:,:,:), allocatable :: subsub_hydrobc
 
-  integer :: subsub_debugn
+  integer :: subsub_debugn, subsub_debugtag
   real(dp) :: subsub_tcheck_cg(40), subsub_tcheck_cg_global(40)
   integer :: subsub_ncheck_cg(10), subsub_ncheck_cg_global(10)
 contains

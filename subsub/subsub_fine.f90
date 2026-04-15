@@ -266,7 +266,7 @@ subroutine subsub_compute
     !! update some properties
     subsub_obj(i)%mass_cell = (subsub_boxlen**ndim) * max(subsub_obj(i)%uold(0,1),subsub_dfloor)
 
-write(*,*) '%112233 beff: ', myid, i, subsub_obj(i)%mass_cell, subsub_obj(i)%mass_tot
+!write(*,*) '%112233 beff: ', myid, i, subsub_obj(i)%mass_cell, subsub_obj(i)%mass_tot
     !! update mass_tot
     !mtot_old = subsub_obj(i)%mass_tot
     !mbh_old = subsub_obj(i)%sink_mass
@@ -324,7 +324,7 @@ write(*,*) '%112233 beff: ', myid, i, subsub_obj(i)%mass_cell, subsub_obj(i)%mas
    !subsub_obj(i)%mass_tot = mtot_new
    !subsub_obj(i)%sink_mass = msink(sinkind)
 !write(*,*) '%112233 done ', myid, i, ' / ', subsub_end
-write(*,*) '%112233 done: ', myid, i, subsub_obj(i)%sink_id, subsub_obj(i)%mass_cell, subsub_obj(i)%mass_tot
+!write(*,*) '%112233 done: ', myid, i, subsub_obj(i)%sink_id, subsub_obj(i)%mass_cell, subsub_obj(i)%mass_tot
   enddo
   
   deallocate(subsub_phi)

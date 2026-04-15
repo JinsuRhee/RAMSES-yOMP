@@ -811,17 +811,41 @@ subroutine subsub_updatedomain
             !! )) DEBUGG HYDRO((         <- this is for grep
             if(subsub_dev_hydroonly .eq. 1)then
               call subsub_get3ind(j, ix, iy, iz)
-              !if(iy.ge.subsub_ngrid/2) subsub_obj(myind)%hydro(j,2) = subsub_obj(myind)%uold(1,2)
-              !if(iy.lt.subsub_ngrid/2) subsub_obj(myind)%hydro(j,2) = -subsub_obj(myind)%uold(1,2)
 
-              subsub_obj(myind)%hydro(j,1) = 1.0D0 * 1.0D0/subsub_dd(j)
-              !if(ix.ge.20 .and. ix.lt.30) subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(2,1)
-              subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)!abs(subsub_obj(myind)%uold(2,2))
-              subsub_obj(myind)%hydro(j,3) = 0.
-              subsub_obj(myind)%hydro(j,4) = 0.
-              subsub_obj(myind)%hydro(j,5) = 1.0D-10!subsub_obj(myind)%uold(2,5)
+              if(iy.ge.subsub_ngrid/2)then
+                subsub_obj(myind)%hydro(j,1) = 1.0D-1
+                subsub_obj(myind)%hydro(j,2) = 1.0D-3*subsub_obj(myind)%hydro(j,1)
+                subsub_obj(myind)%hydro(j,3) = 0.
+                subsub_obj(myind)%hydro(j,4) = 0.
+                subsub_obj(myind)%hydro(j,5) = 1.0D-10
+              else
+                subsub_obj(myind)%hydro(j,1) = 5.0D-1
+                subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)
+                subsub_obj(myind)%hydro(j,3) = 0.
+                subsub_obj(myind)%hydro(j,4) = 0.
+                subsub_obj(myind)%hydro(j,5) = 1.0D-10
+              endif
             endif
 
+            !! DEBUG MODE FOR SELF-GRAVITY TEST
+            !! )) DEBUGG GRAV+HYDRO((         <- this is for grep
+            if(subsub_dev_gravhydro .eq. 1)then
+              subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
+              subsub_obj(myind)%hydro(j,2) = 0.0D0
+              subsub_obj(myind)%hydro(j,3) = 0.0D0
+              subsub_obj(myind)%hydro(j,4) = 0.0D0
+              subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
+            endif
+
+            !! DEBUG MODE FOR SELF-GRAVITY TEST
+            !! )) DEBUGG GRAV+HYDRO+BH((         <- this is for grep
+            if(subsub_dev_gravhydrobh .eq. 1)then
+              subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
+              subsub_obj(myind)%hydro(j,2) = 0.0D0
+              subsub_obj(myind)%hydro(j,3) = 0.0D0
+              subsub_obj(myind)%hydro(j,4) = 0.0D0
+              subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
+            endif
           enddo
           !$omp end parallel do
           !r = uold(ind_cell,1)
@@ -888,16 +912,40 @@ subroutine subsub_updatedomain
             !! )) DEBUGG HYDRO((         <- this is for grep
             if(subsub_dev_hydroonly .eq. 1)then
               call subsub_get3ind(j, ix, iy, iz)
-              !if(iy.ge.subsub_ngrid/2) subsub_obj(myind)%hydro(j,2) = subsub_obj(myind)%uold(1,2)
-              !if(iy.lt.subsub_ngrid/2) subsub_obj(myind)%hydro(j,2) = -subsub_obj(myind)%uold(1,2)
 
+              if(iy.ge.subsub_ngrid/2)then
+                subsub_obj(myind)%hydro(j,1) = 1.0D-1
+                subsub_obj(myind)%hydro(j,2) = 1.0D-3*subsub_obj(myind)%hydro(j,1)
+                subsub_obj(myind)%hydro(j,3) = 0.
+                subsub_obj(myind)%hydro(j,4) = 0.
+                subsub_obj(myind)%hydro(j,5) = 1.0D-10
+              else
+                subsub_obj(myind)%hydro(j,1) = 5.0D-1
+                subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)
+                subsub_obj(myind)%hydro(j,3) = 0.
+                subsub_obj(myind)%hydro(j,4) = 0.
+                subsub_obj(myind)%hydro(j,5) = 1.0D-10
+              endif
+            endif
 
-              subsub_obj(myind)%hydro(j,1) = 1.0D0 * 1.0D-5/subsub_dd(j)
-              !if(ix.ge.20 .and. ix.lt.30) subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(2,1)
-              subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)!abs(subsub_obj(myind)%uold(2,2))
-              subsub_obj(myind)%hydro(j,3) = 0.
-              subsub_obj(myind)%hydro(j,4) = 0.
-              subsub_obj(myind)%hydro(j,5) = 1.0D-10!subsub_obj(myind)%uold(2,5)
+            !! DEBUG MODE FOR SELF-GRAVITY TEST
+            !! )) DEBUGG GRAV+HYDRO((         <- this is for grep
+            if(subsub_dev_gravhydro .eq. 1)then
+              subsub_obj(myind)%hydro(j,1) = dblarr(1)
+              subsub_obj(myind)%hydro(j,2) = 0.0D0
+              subsub_obj(myind)%hydro(j,3) = 0.0D0
+              subsub_obj(myind)%hydro(j,4) = 0.0D0
+              subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
+            endif
+
+            !! DEBUG MODE FOR SELF-GRAVITY TEST
+            !! )) DEBUGG GRAV+HYDRO+BH((         <- this is for grep
+            if(subsub_dev_gravhydrobh .eq. 1)then
+              subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
+              subsub_obj(myind)%hydro(j,2) = 0.0D0
+              subsub_obj(myind)%hydro(j,3) = 0.0D0
+              subsub_obj(myind)%hydro(j,4) = 0.0D0
+              subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
             endif
           enddo
           !$omp end parallel do
