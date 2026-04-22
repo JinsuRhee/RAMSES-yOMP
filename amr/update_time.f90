@@ -471,6 +471,9 @@ subroutine clean_stop
     !if(allocated(subsub_flux_down)) deallocate(subsub_flux_down)
     if(allocated(subsub_dd)) deallocate(subsub_dd)
 
+    !if(allocated(subsub_clouds)) deallocate(subsub_clouds)
+    !if(allocated(subsub_clouds_ind)) deallocate(subsub_clouds_ind)
+
     if(subsub_end .ge. 1) then
       do i=1, subsub_end
         call subsub_deallocate(subsub_obj(i))

@@ -34,7 +34,7 @@ module subsub_parameters
   integer :: subsub_dev_icsphere = 0
   integer :: subsub_dev_gravonly = 0
   integer :: subsub_dev_hydroonly = 0
-  integer :: subsub_dev_gravhydro = 1
+  integer :: subsub_dev_gravhydro = 0
   integer :: subsub_dev_gravhydrobh = 0
 
 end module subsub_parameters

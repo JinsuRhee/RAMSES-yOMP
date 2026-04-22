@@ -78,6 +78,7 @@ subroutine subsub_backup(filename)
       enddo
 
       write(unit_out) subsub_dump(i)%phi
+      write(unit_out) subsub_dump(i)%phi_bh
     enddo
     
 
@@ -216,6 +217,9 @@ subroutine subsub_readdump
 
       read(unit_out) dumdparr
       subsub_dummy(i)%phi(:) = dumdparr(:)
+
+      read(unit_out) dumdparr
+      subsub_dummy(i)%phi_bh(:) = dumdparr(:)
   
       !! debugger
       if(idsink(subsub_dummy(i)%sink_ind) .ne. subsub_dummy(i)%sink_id) then
@@ -235,6 +239,9 @@ subroutine subsub_readdump
   !! Sort by sink_ind
   !!-----
   if(myid .eq. 1)then
+    do i=1, nsink
+      write(*,*) subsub_dummy(i)%sink_id
+    enddo
     call subsub_sortbyind(subsub_dummy, nsink)
   endif
 
@@ -315,6 +322,7 @@ subroutine subsub_gather(subsub_dump)
 
         call MPI_RECV(subsub_dump(i)%hydro(1,1), subsub_nn2, subsub_mpidp, myobj-1, tag3, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
         call MPI_RECV(subsub_dump(i)%phi(1), subsub_nn0,     subsub_mpidp, myobj-1, tag4, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(subsub_dump(i)%phi_bh(1), subsub_nn0,  subsub_mpidp, myobj-1, tag5, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
 
         subsub_dump(i)%sink_ind = intarr(1)
         subsub_dump(i)%sink_id = intarr(2)
@@ -357,6 +365,7 @@ subroutine subsub_gather(subsub_dump)
         
         call MPI_SEND(subsub_obj(iend)%hydro(1,1), subsub_nn2, subsub_mpidp, 0, tag3, MPI_COMM_WORLD, info)
         call MPI_SEND(subsub_obj(iend)%phi(1), subsub_nn0,     subsub_mpidp, 0, tag4, MPI_COMM_WORLD, info)
+        call MPI_SEND(subsub_obj(iend)%phi_bh(1), subsub_nn0,  subsub_mpidp, 0, tag5, MPI_COMM_WORLD, info)
       endif
     endif
 
@@ -457,6 +466,7 @@ subroutine subsub_spread(subsub_dummy)
         
         call MPI_SEND(subsub_dummy(i)%hydro(1,1), subsub_nn2, subsub_mpidp, ismysink(i)-1, tag3, MPI_COMM_WORLD, info)
         call MPI_SEND(subsub_dummy(i)%phi(1), subsub_nn0,     subsub_mpidp, ismysink(i)-1, tag4, MPI_COMM_WORLD, info)
+        call MPI_SEND(subsub_dummy(i)%phi_bh(1), subsub_nn0,  subsub_mpidp, ismysink(i)-1, tag5, MPI_COMM_WORLD, info)
         
       endif
     else
@@ -469,6 +479,7 @@ subroutine subsub_spread(subsub_dummy)
 
         call MPI_RECV(subsub_obj(subsub_end)%hydro(1,1), subsub_nn2, subsub_mpidp, 0, tag3, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
         call MPI_RECV(subsub_obj(subsub_end)%phi(1), subsub_nn0,     subsub_mpidp, 0, tag4, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(subsub_obj(subsub_end)%phi_bh(1), subsub_nn0,  subsub_mpidp, 0, tag5, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
 
         subsub_obj(subsub_end)%sink_ind = intarr(1)
         subsub_obj(subsub_end)%sink_id = intarr(2)
@@ -615,11 +626,19 @@ subroutine subsub_allocate(subsub_dummy)
   !allocate(subsub_dummy%vg(1:subsub_ngrid**ndim, 1:ndim))
   allocate(subsub_dummy%hydro(1:subsub_ngrid**ndim, 1:subsub_nhydro))  ! 1 for density
   allocate(subsub_dummy%phi(1:subsub_ngrid**ndim))
+  allocate(subsub_dummy%phi_bh(1:subsub_ngrid**ndim))
   allocate(subsub_dummy%uold(0:twondim, 1:subsub_nhydro))
+  allocate(subsub_dummy%edgeBC(1:twotondim,1:subsub_nhydro))
+  allocate(subsub_dummy%faceBC(1:2,1:ndim,1:subsub_ngrid,1:subsub_ngrid,1:subsub_nhydro)) ! face direction, dimension, index1, index2, nvar
+  
 
+  subsub_dummy%new = .true.
   subsub_dummy%hydro(:,:) = 0.0D0
   subsub_dummy%phi(:) = 0.0D0
+  subsub_dummy%phi_bh(:) = 0.0D0
   subsub_dummy%uold(:,:) = 0.0D0
+  subsub_dummy%edgeBC(:,:) = 0.0D0
+  subsub_dummy%faceBC(:,:,:,:,:) = 0.0D0
 
 end subroutine subsub_allocate
 subroutine subsub_deallocate(subsub_dummy)
@@ -637,7 +656,10 @@ subroutine subsub_deallocate(subsub_dummy)
      
   if(allocated(subsub_dummy%hydro)) deallocate(subsub_dummy%hydro)
   if(allocated(subsub_dummy%phi)) deallocate(subsub_dummy%phi)
+  if(allocated(subsub_dummy%phi_bh)) deallocate(subsub_dummy%phi_bh)
   if(allocated(subsub_dummy%uold)) deallocate(subsub_dummy%uold)
+  if(allocated(subsub_dummy%edgeBC)) deallocate(subsub_dummy%edgeBC)
+  if(allocated(subsub_dummy%faceBC)) deallocate(subsub_dummy%faceBC)
 
 end subroutine subsub_deallocate
 !################################################################
@@ -707,7 +729,7 @@ end subroutine subsub_create
 !################################################################
 !################################################################
 !################################################################
-subroutine subsub_updatedomain
+subroutine subsub_updatedomain(ilevel)
   !!-----
   !! This routine updates the domain number for the sink particles and the uold of the cell hosting sink particles
   use amr_commons
@@ -717,6 +739,8 @@ subroutine subsub_updatedomain
   use mpi_mod
   use hydro_commons
   implicit none
+
+  integer :: ilevel
 
   !! Local variables
   integer :: i, j, ismy, info, myind, myobj, nx_loc, ivar
@@ -729,11 +753,12 @@ subroutine subsub_updatedomain
 
   real(dp), dimension(0:twondim, 1:subsub_nhydro) :: hdummy
   real(dp), dimension(1:subsub_nhydro*(twondim+1)) :: dblarr
+  real(dp), dimension(1:twotondim, 1:subsub_nhydro) :: edgeBC
   integer, dimension(1:1) :: intarr
 
   integer :: ix, iy, iz, ii
   real(dp) :: r, u, v, w
-  
+  real(dp) :: xc, yc, zc, rvx, rvy, rvz, rvv, pold, ekin
 
 
 
@@ -771,6 +796,8 @@ subroutine subsub_updatedomain
     myobj = 1
 #endif
 
+    !! If this sink is in my domain, (mysink.eq.myid) retrieve cell information and send it to the MPI who has this sink object (myobj)
+    !! If this sink is mine (mysink.eq.myid) and allocated to me (myobj .eq. myid) do not send/recv
     if(myobj .eq. myid) then
       myind = myind + 1
 
@@ -784,198 +811,41 @@ subroutine subsub_updatedomain
           stop
         endif
 
-        call subsub_nbcellinput(ind_cell, ind_level, subsub_obj(myind)%uold(:,:))
+        !call subsub_computeBC(i, edgeBC)
 
-        !!----- Initialize for newly allocated
-        if(subsub_obj(myind)%domain .eq. 0) then
+        subsub_obj(myind)%uold(0,:) = uold(ind_cell,1:subsub_nhydro)
+        !do icell=1, twondim
+        !  do ivar=1, subsub_nhydro
+        !    subsub_obj(myind)%edgeBC(icell,ivar) = edgeBC(icell, ivar)
+        !  enddo
+        !enddo
+        !! initial mass by the total cell mass
 
-          !$omp parallel do private(ix,iy,iz)
-          do j=1, subsub_nn
-            subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
-            subsub_obj(myind)%hydro(j,2) = subsub_obj(myind)%uold(0,2)
-            subsub_obj(myind)%hydro(j,3) = subsub_obj(myind)%uold(0,3)
-            subsub_obj(myind)%hydro(j,4) = subsub_obj(myind)%uold(0,4)
-            subsub_obj(myind)%hydro(j,5) = subsub_obj(myind)%uold(0,5)
-
-            !! DEBUG MODE FOR SELF-GRAVITY TEST
-            !! )) DEBUGG GRAV((         <- this is for grep
-            if(subsub_dev_gravonly .eq. 1)then
-              !subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%hydro(j,1) * subsub_dd(j)
-              subsub_obj(myind)%hydro(j,2) = 0.0D0
-              subsub_obj(myind)%hydro(j,3) = 0.0D0
-              subsub_obj(myind)%hydro(j,4) = 0.0D0
-              subsub_obj(myind)%hydro(j,5) = 0.0D0
-            endif
-
-            !! DEBUG MODE FOR SELF-GRAVITY TEST
-            !! )) DEBUGG HYDRO((         <- this is for grep
-            if(subsub_dev_hydroonly .eq. 1)then
-              call subsub_get3ind(j, ix, iy, iz)
-
-              if(iy.ge.subsub_ngrid/2)then
-                subsub_obj(myind)%hydro(j,1) = 1.0D-1
-                subsub_obj(myind)%hydro(j,2) = 1.0D-3*subsub_obj(myind)%hydro(j,1)
-                subsub_obj(myind)%hydro(j,3) = 0.
-                subsub_obj(myind)%hydro(j,4) = 0.
-                subsub_obj(myind)%hydro(j,5) = 1.0D-10
-              else
-                subsub_obj(myind)%hydro(j,1) = 5.0D-1
-                subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)
-                subsub_obj(myind)%hydro(j,3) = 0.
-                subsub_obj(myind)%hydro(j,4) = 0.
-                subsub_obj(myind)%hydro(j,5) = 1.0D-10
-              endif
-            endif
-
-            !! DEBUG MODE FOR SELF-GRAVITY TEST
-            !! )) DEBUGG GRAV+HYDRO((         <- this is for grep
-            if(subsub_dev_gravhydro .eq. 1)then
-              subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
-              subsub_obj(myind)%hydro(j,2) = 0.0D0
-              subsub_obj(myind)%hydro(j,3) = 0.0D0
-              subsub_obj(myind)%hydro(j,4) = 0.0D0
-              subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
-            endif
-
-            !! DEBUG MODE FOR SELF-GRAVITY TEST
-            !! )) DEBUGG GRAV+HYDRO+BH((         <- this is for grep
-            if(subsub_dev_gravhydrobh .eq. 1)then
-              subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
-              subsub_obj(myind)%hydro(j,2) = 0.0D0
-              subsub_obj(myind)%hydro(j,3) = 0.0D0
-              subsub_obj(myind)%hydro(j,4) = 0.0D0
-              subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
-            endif
-          enddo
-          !$omp end parallel do
-          !r = uold(ind_cell,1)
-          !u = uold(ind_cell,2)/r
-          !v = uold(ind_cell,3)/r
-          !w = uold(ind_cell,4)/r 
-          !subsub_obj(myind)%hydro(:,5) = uold(ind_cell,5)-0.5D0*r*(u**2 + v**2 + w**2)
-
-          !! initial mass by the total cell mass
-          subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(uold(ind_cell,1), subsub_dfloor)
-          subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(uold(ind_cell,1), subsub_dfloor)
-          if(subsub_dev_icsphere .eq. 1) then
-            !!----- RHEE -----
-            !! For spherical IC test
-            !!----------------
-            do ix=1, subsub_ngrid
-            do iy=1, subsub_ngrid
-            do iz=1, subsub_ngrid
-              ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
-              if(ix**2 + iy**2 + iz**2 .gt. subsub_ngrid**2) subsub_obj(myind)%hydro(ii,1) = subsub_dfloor
-            enddo
-            enddo
-            enddo
-          endif
-        endif
-
+        subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(uold(ind_cell,1), subsub_dfloor)
+        subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(uold(ind_cell,1), subsub_dfloor)
         subsub_obj(myind)%clevel = ind_level
         subsub_obj(myind)%domain = myid
 
 
       else
-        call MPI_RECV(dblarr(1), subsub_nhydro*(twondim+1), subsub_mpidp, mysink(i)-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
+        call MPI_RECV(dblarr(1), subsub_nhydro, subsub_mpidp, mysink(i)-1, tag1, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
         call MPI_RECV(intarr(1), 1, MPI_INTEGER,  mysink(i)-1, tag2, MPI_COMM_WORLD, MPI_STATUS_IGNORE, info)
 
-        icell0 = 1
-        do icell=0, twondim
-          do ivar=1, subsub_nhydro
-            subsub_obj(myind)%uold(icell,ivar) = dblarr(icell0)
-            icell0 = icell0 + 1
-          enddo
+        !icell0 = 1
+        !do icell=1, twondim
+        !  do ivar=1, subsub_nhydro
+        !    subsub_obj(myind)%edgeBC(icell,ivar) = dblarr(icell0)
+        !    icell0 = icell0 + 1
+        !  enddo
+        !enddo
+
+        do ivar=1, subsub_nhydro
+          subsub_obj(myind)%uold(0,ivar) = dblarr(ivar)
         enddo
 
-        !!----- Initialize for newly allocated
-        if(subsub_obj(myind)%domain .eq. 0) then 
-
-          !$omp parallel do private(ix,iy,iz)
-          do j=1, subsub_nn
-            subsub_obj(myind)%hydro(j,1) = dblarr(1)
-            subsub_obj(myind)%hydro(j,2) = dblarr(2)
-            subsub_obj(myind)%hydro(j,3) = dblarr(3)
-            subsub_obj(myind)%hydro(j,4) = dblarr(4)
-            subsub_obj(myind)%hydro(j,5) = dblarr(5)
-
-            !! DEBUG MODE FOR SELF-GRAVITY TEST
-            !! )) DEBUGG GRAV((         <- this is for grep
-            if(subsub_dev_gravonly .eq. 1)then
-              subsub_obj(myind)%hydro(j,2) = 0.0D0
-              subsub_obj(myind)%hydro(j,3) = 0.0D0
-              subsub_obj(myind)%hydro(j,4) = 0.0D0
-              subsub_obj(myind)%hydro(j,5) = 0.0D0
-            endif
-
-            !! DEBUG MODE FOR SELF-GRAVITY TEST
-            !! )) DEBUGG HYDRO((         <- this is for grep
-            if(subsub_dev_hydroonly .eq. 1)then
-              call subsub_get3ind(j, ix, iy, iz)
-
-              if(iy.ge.subsub_ngrid/2)then
-                subsub_obj(myind)%hydro(j,1) = 1.0D-1
-                subsub_obj(myind)%hydro(j,2) = 1.0D-3*subsub_obj(myind)%hydro(j,1)
-                subsub_obj(myind)%hydro(j,3) = 0.
-                subsub_obj(myind)%hydro(j,4) = 0.
-                subsub_obj(myind)%hydro(j,5) = 1.0D-10
-              else
-                subsub_obj(myind)%hydro(j,1) = 5.0D-1
-                subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)
-                subsub_obj(myind)%hydro(j,3) = 0.
-                subsub_obj(myind)%hydro(j,4) = 0.
-                subsub_obj(myind)%hydro(j,5) = 1.0D-10
-              endif
-            endif
-
-            !! DEBUG MODE FOR SELF-GRAVITY TEST
-            !! )) DEBUGG GRAV+HYDRO((         <- this is for grep
-            if(subsub_dev_gravhydro .eq. 1)then
-              subsub_obj(myind)%hydro(j,1) = dblarr(1)
-              subsub_obj(myind)%hydro(j,2) = 0.0D0
-              subsub_obj(myind)%hydro(j,3) = 0.0D0
-              subsub_obj(myind)%hydro(j,4) = 0.0D0
-              subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
-            endif
-
-            !! DEBUG MODE FOR SELF-GRAVITY TEST
-            !! )) DEBUGG GRAV+HYDRO+BH((         <- this is for grep
-            if(subsub_dev_gravhydrobh .eq. 1)then
-              subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
-              subsub_obj(myind)%hydro(j,2) = 0.0D0
-              subsub_obj(myind)%hydro(j,3) = 0.0D0
-              subsub_obj(myind)%hydro(j,4) = 0.0D0
-              subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
-            endif
-          enddo
-          !$omp end parallel do
-
-          !r = dblarr(1)
-          !u = dblarr(2)/r
-          !v = dblarr(3)/r
-          !w = dblarr(4)/r 
-          !subsub_obj(myind)%hydro(:,5) = dblarr(5)-0.5D0*r*(u**2 + v**2 + w**2)
-
-          !! initial mass by the total cell mass
-          subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
-          subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
-
-          if(subsub_dev_icsphere .eq. 1) then
-            !!----- RHEE -----
-            !! For spherical IC test
-            !!----------------
-            do ix=1, subsub_ngrid
-            do iy=1, subsub_ngrid
-            do iz=1, subsub_ngrid
-              ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
-              if(ix**2 + iy**2 + iz**2 .gt. subsub_ngrid**2) subsub_obj(myind)%hydro(ii,1) = subsub_dfloor
-            enddo
-            enddo
-            enddo
-          endif
-        endif
-
-
+        
+        subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(subsub_obj(myind)%uold(0,1), subsub_dfloor)
+        subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(subsub_obj(myind)%uold(0,1), subsub_dfloor)
         subsub_obj(myind)%clevel = intarr(1)
         subsub_obj(myind)%domain = mysink(i)
 
@@ -986,32 +856,165 @@ subroutine subsub_updatedomain
         call subsub_findcell(xsink(i,1)/scale, xsink(i,2)/scale, xsink(i,3)/scale, &
           ind_cell, ind_grid, ind_level, subsub_flag)
 
-
-
         if(.not. subsub_flag)then
           call subsub_log('cannot find the cell', 'subsub_updatedomain2')
           stop
         endif
              
-        call subsub_nbcellinput(ind_cell, ind_level, hdummy)
-
-        icell0 = 1
-        do icell=0, twondim
-          do ivar=1, subsub_nhydro
-            dblarr(icell0) = hdummy(icell, ivar)
-            icell0 = icell0 + 1
-          enddo
+        !call subsub_nbcellinput(ind_cell, ind_level, hdummy)
+        !call subsub_computeBC(i, edgeBC)
+        do ivar=1, subsub_nhydro
+          dblarr(ivar) = uold(ind_cell,ivar)
         enddo
+
+        !icell0 = 1
+        !do icell=1, twondim
+        !  do ivar=1, subsub_nhydro
+        !    dblarr(icell0) = edgeBC(icell, ivar)
+        !    icell0 = icell0 + 1
+        !  enddo
+        !enddo
         intarr(1) = ind_level
 
 
-        call MPI_SEND(dblarr(1), subsub_nhydro*(twondim+1), subsub_mpidp, myobj-1, tag1, MPI_COMM_WORLD,info)
+        call MPI_SEND(dblarr(1), subsub_nhydro, subsub_mpidp, myobj-1, tag1, MPI_COMM_WORLD,info)
         call MPI_SEND(intarr(1), 1, MPI_INTEGER,  myobj-1, tag2, MPI_COMM_WORLD,info)
       endif
-    endif
-    
-    !call MPI_BARRIER(MPI_COMM_WORLD, info)
+    endif 
   enddo
+
+  !!----- Set Cells
+  if(subsub_end .gt. 0) then
+    do myind=1, subsub_end
+
+      !!----- Initialize for newly allocated
+      if(subsub_obj(myind)%new) then 
+
+        !$omp parallel do private(pold, ekin)
+        do j=1, subsub_nn
+          subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)!dblarr(1)
+          subsub_obj(myind)%hydro(j,2) = 0.0D0!dblarr(2)
+          subsub_obj(myind)%hydro(j,3) = 0.0D0!dblarr(3)
+          subsub_obj(myind)%hydro(j,4) = 0.0D0!dblarr(4)
+
+          ekin = 0.5D0 * (subsub_obj(myind)%uold(0,2)**2 + subsub_obj(myind)%uold(0,3)**2 + subsub_obj(myind)%uold(0,4)**2) / subsub_obj(myind)%uold(0,1)
+
+          pold = (subsub_obj(myind)%uold(0,5) - ekin) * (gamma - 1.0D0)
+          subsub_obj(myind)%hydro(j,5) = pold!dblarr(5)
+        enddo
+        !$omp end parallel do
+  
+        !subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
+        !subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
+  
+  
+        !!----- Some Debugger
+  
+        !! DEBUG MODE FOR SELF-GRAVITY TEST
+        !! )) DEBUGG GRAV((         <- this is for grep
+        if(subsub_dev_gravonly .eq. 1)then
+          !$omp parallel do private(ix,iy,iz, xc, yc, zc, rvx, rvy, rvz, rvv)
+          do j=1, subsub_nn
+            subsub_obj(myind)%hydro(j,2) = 0.0D0
+            subsub_obj(myind)%hydro(j,3) = 0.0D0
+            subsub_obj(myind)%hydro(j,4) = 0.0D0
+            subsub_obj(myind)%hydro(j,5) = 0.0D0
+          enddo
+          !$omp end parallel do
+        endif
+  
+        !! DEBUG MODE FOR SELF-GRAVITY TEST
+        !! )) DEBUGG HYDRO((         <- this is for grep
+        if(subsub_dev_hydroonly .eq. 1)then
+          !$omp parallel do private(ix,iy,iz, xc, yc, zc, rvx, rvy, rvz, rvv)
+          do j=1, subsub_nn
+            call subsub_get3ind(j, ix, iy, iz)
+  
+            if(iy.ge.subsub_ngrid/2)then
+              subsub_obj(myind)%hydro(j,1) = 1.0D-1
+              subsub_obj(myind)%hydro(j,2) = 1.0D-3*subsub_obj(myind)%hydro(j,1)
+              subsub_obj(myind)%hydro(j,3) = 0.
+              subsub_obj(myind)%hydro(j,4) = 0.
+              subsub_obj(myind)%hydro(j,5) = 1.0D-10
+            else
+              subsub_obj(myind)%hydro(j,1) = 5.0D-1
+              subsub_obj(myind)%hydro(j,2) = 1.0D-4*subsub_obj(myind)%hydro(j,1)
+              subsub_obj(myind)%hydro(j,3) = 0.
+              subsub_obj(myind)%hydro(j,4) = 0.
+              subsub_obj(myind)%hydro(j,5) = 1.0D-10
+            endif
+          enddo
+          !$omp end parallel do
+        endif
+  
+        !! DEBUG MODE FOR SELF-GRAVITY TEST
+        !! )) DEBUGG GRAV+HYDRO((         <- this is for grep
+        if(subsub_dev_gravhydro .eq. 1)then
+          !$omp parallel do private(ix,iy,iz, xc, yc, zc, rvx, rvy, rvz, rvv)
+          do j=1, subsub_nn
+            subsub_obj(myind)%hydro(j,1) = dblarr(1)
+            subsub_obj(myind)%hydro(j,2) = 0.0D0
+            subsub_obj(myind)%hydro(j,3) = 0.0D0
+            subsub_obj(myind)%hydro(j,4) = 0.0D0
+            subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
+          enddo
+          !$omp end parallel do
+        endif
+  
+        !! DEBUG MODE FOR SELF-GRAVITY TEST
+        !! )) DEBUGG GRAV+HYDRO+BH((         <- this is for grep 
+        if(subsub_dev_gravhydrobh .eq. 1)then
+          !$omp parallel do private(ix,iy,iz, xc, yc, zc, rvx, rvy, rvz, rvv)
+          do j=1, subsub_nn
+            call subsub_get3ind(j, ix, iy, iz)
+  
+            subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)
+  
+            xc = (dble(ix)-0.5D0)*subsub_dx - subsub_boxlen/2.0D0
+            yc = (dble(iy)-0.5D0)*subsub_dx - subsub_boxlen/2.0D0
+            zc = (dble(iz)-0.5D0)*subsub_dx - subsub_boxlen/2.0D0
+            rvv = 1.0D-6 * MAX((subsub_boxlen/2.0D0*sqrt(3.D0) - subsub_dd(j)),0.0D0)/subsub_boxlen/2.0D0
+  
+            rvx = sqrt(rvv / (1.0D0 + (xc/yc)**2))
+            if(yc.lt.0) rvx = -rvx
+            rvy = rvx*(-xc/yc)
+            rvz = 0.0D0
+  
+            !write(*,*) vsink(subsub_obj(myind)%sink_ind,1)
+            !write(*,*) subsub_obj(myind)%uold(0,2)/subsub_obj(myind)%uold(0,1)
+            !write(*,*) vsink(subsub_obj(myind)%sink_ind,1)-subsub_obj(myind)%uold(0,2)/subsub_obj(myind)%uold(0,1)
+  
+            subsub_obj(myind)%hydro(j,2) = rvx * subsub_obj(myind)%hydro(j,1)
+            subsub_obj(myind)%hydro(j,3) = rvy * subsub_obj(myind)%hydro(j,1)
+            subsub_obj(myind)%hydro(j,4) = rvz * subsub_obj(myind)%hydro(j,1)
+            subsub_obj(myind)%hydro(j,5) = subsub_pfloor/(gamma-1.0D0)
+          enddo
+          !$omp end parallel do
+        endif
+  
+  
+        !! DEBUG MODE FOR SELF-GRAVITY TEST
+        !! )) DEBUGG SPHERICAL IC((         <- this is for grep 
+        if(subsub_dev_icsphere .eq. 1) then
+          !!----- RHEE -----
+          !! For spherical IC test
+          !!----------------
+          !$omp parallel do collapse(2) private(iz, ii)
+          do ix=1, subsub_ngrid
+          do iy=1, subsub_ngrid
+          do iz=1, subsub_ngrid
+            ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+            if(ix**2 + iy**2 + iz**2 .gt. subsub_ngrid**2) subsub_obj(myind)%hydro(ii,1) = subsub_dfloor
+          enddo
+          enddo
+          enddo
+          !$omp end parallel do
+        endif
+      endif
+
+      subsub_obj(myind)%new = .false.
+    enddo
+  endif
 end subroutine subsub_updatedomain
 !################################################################
 !################################################################

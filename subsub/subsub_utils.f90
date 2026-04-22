@@ -157,6 +157,545 @@ end subroutine subsub_findcell
 !################################################################
 !################################################################
 !################################################################
+recursive subroutine subsub_walkgrid(xc, skip_loc, sinkid, ind0, ilevel0, x, y, z, r, clouds, n, nmax)
+  use amr_commons
+  use pm_commons
+  use hydro_commons
+  use subsub_parameters
+  use hydro_parameters, ONLY: gamma
+  implicit none
+
+  integer :: ind0, ilevel0, sinkid, nmax
+  real(dp), dimension(1:nmax,1:subsub_nhydro+ndim) :: clouds
+  integer :: n
+  real(dp) :: x, y, z, r
+  real(dp),dimension(1:twotondim,1:3) :: xc
+  real(dp),dimension(1:3)::skip_loc
+
+  !! Local variables
+  integer :: ind, ind2, idim, ilevelc
+  integer :: ind_level, index_grid, index_cell, iskip
+  integer :: index_grid2
+  real(dp) :: dx, dr_cell
+  integer :: ix, iy, iz, ipart, jpart
+
+  
+  real(dp),dimension(1:twotondim, 1:3) :: center
+
+  integer :: npart1, next_part
+  logical :: okay, okay2, okay3
+  real(dp) :: rho, u, v, w, p, ekin
+
+  ilevelc = ilevel0 + 1
+
+  if(ilevelc .gt. nlevelmax-nlevelsheld) return
+  index_grid = ind0
+
+
+if(myid.eq.26) then
+  write(*,*) ind0, ilevelc
+endif
+
+  !! Get cell center positons
+  dx=0.5D0**ilevelc
+  do ind=1, twotondim
+    do idim=1, ndim
+      center(ind, idim) = xg(index_grid,idim)+xc(ind,idim)*dx-skip_loc(idim)
+    enddo
+  enddo
+
+  okay2 = .false.
+  do ind=1, twotondim
+
+    iskip = ncoarse + (ind-1)*ngridmax
+    index_cell = iskip + index_grid
+
+    okay = .true.
+    if (center(ind,1)+dx/2.d0 < x-r .or. center(ind,1)-dx/2.d0 > x+r) okay = .false.
+    if (center(ind,2)+dx/2.d0 < y-r .or. center(ind,2)-dx/2.d0 > y+r) okay = .false.
+    if (center(ind,3)+dx/2.d0 < z-r .or. center(ind,3)-dx/2.d0 > z+r) okay = .false.
+
+if(myid.eq.26) then
+  write(*,*) ilevelc, ind, index_grid
+  if(okay)then
+    write(*,*) ' --- okay here', son(index_cell)
+    write(*,*)
+  endif
+endif
+
+    !! One of the edges is located in this cell
+    if(okay) then
+      index_grid2 = son(index_cell)
+
+      if(index_grid2 .eq. 0) then !! This is a leaf cell. Collect coulds.
+        okay2 = .true.
+        exit
+      else
+        call subsub_walkgrid(xc, skip_loc, sinkid, index_grid2, ilevelc, x, y, z, r, clouds, n, nmax)
+
+      endif
+    endif
+  enddo
+
+if(myid.eq.26) then
+  write(*,*) 'found ??'
+  if(okay2) write(*,*) ' -> yes'
+  if(okay2) write(*,*) index_grid, numbp(index_grid), ilevelc
+endif
+
+  !! This grid has leaf cells contained to the box
+  if(okay2) then
+    npart1=numbp(index_grid)
+    if(npart1 .le. 0) return
+
+    ipart = headp(index_grid)
+    do jpart=1, npart1
+      next_part=nextp(ipart)
+
+      !! cloud for this sink
+      if(is_cloud(typep(ipart)) .and. idp(ipart) .eq. -sinkid) then
+
+        n = n + 1
+        
+        !! Contained to which cell?
+       do ind2=1, twotondim
+          if(xp(ipart,1) .lt. center(ind2,1)-dx/2.0D0 .or. xp(ipart,1) .gt. center(ind2,1)+dx/2.0D0) cycle
+          if(xp(ipart,2) .lt. center(ind2,2)-dx/2.0D0 .or. xp(ipart,2) .gt. center(ind2,2)+dx/2.0D0) cycle
+          if(xp(ipart,3) .lt. center(ind2,3)-dx/2.0D0 .or. xp(ipart,3) .gt. center(ind2,3)+dx/2.0D0) cycle
+         
+
+          iskip = ncoarse + (ind2-1)*ngridmax
+          index_cell = iskip + index_grid
+
+          if(n.gt.nmax) then
+            write(*,*) 'more cloud particles than maximum?'
+            write(*,*) 'n_cloud_max = ', nmax
+            write(*,*) 'myid = ', myid
+            write(*,*) 'sinkid = ', sinkid
+            stop
+          endif
+
+          !! Save as primitive
+          rho = MAX(uold(index_cell,1), subsub_dfloor)
+          u = uold(index_cell,2)/rho
+          v = uold(index_cell,3)/rho
+          w = uold(index_cell,4)/rho
+          ekin = 0.5D0 * (u**2 + v**2 + w**2) * rho
+          p = (uold(index_cell,5) - ekin)*(gamma-1.0D0)
+
+          clouds(n,1) = rho
+          clouds(n,2) = u - vp(ipart,1)
+          clouds(n,3) = v - vp(ipart,2)
+          clouds(n,4) = w - vp(ipart,3)
+          clouds(n,5) = p
+
+          clouds(n,6) = xp(ipart,1) - x
+          clouds(n,7) = xp(ipart,2) - y
+          clouds(n,8) = xp(ipart,3) - z
+          exit
+        enddo
+
+
+      endif
+      ipart=next_part  ! Go to next particle
+    enddo
+  endif
+end
+!################################################################
+!################################################################
+!################################################################
+!################################################################
+subroutine subsub_test
+  use subsub_parameters
+  use subsub_commons
+  use amr_commons
+  use pm_commons
+  use mpi_mod
+  implicit none
+  logical :: okay2
+  integer :: nnn, ind_cell, ncache, igrid, ngrid, index_grid, npart1, ipart, jpart, next_part
+  real(dp) :: rrx, rry, rrz
+  integer :: i,j,k, ilevel, l , m , n, ii, jj, kk, pp
+  integer :: ll2, mm2, nn2, ii2, jj2, kk2, pp2
+
+  if(subsub_end .gt. 0) then
+    do i=1, subsub_end
+      if(subsub_obj(i)%sink_id .eq. 3) write(*,*) 'sink 3 in ', myid
+    enddo
+  endif
+ 
+  if(myid.eq.1) then
+    do i=1, nsink
+      write(*,*) ' sink ind & id ' , idsink(i), i
+    enddo
+  endif
+  call MPI_BARRIER(MPI_COMM_WORLD, nnn)
+
+  okay2=.false.
+  nnn = 0
+  rrx = 0.
+  rry = 0.
+  rrz = 0.
+  j = 0
+  k = 0
+  pp = 0
+
+
+ipart = 0
+do i = 1, npartmax
+  if (levelp(i) > 0) then
+    ipart = ipart+1
+
+    if(is_cloud(typep(i))) k = k + 1
+
+    if(is_cloud(typep(i)) .and. idp(i) .eq. -3) pp = pp + 1
+  endif
+enddo
+
+l = ipart
+m = k
+
+k = 0
+
+
+do ilevel=levelmin, nlevelmax
+  igrid = headl(myid, ilevel)
+  if(numbl(myid, ilevel).le.0)cycle
+  do i=1, numbl(myid, ilevel)
+    npart1 = numbp(igrid)
+    j = j + npart1
+    if(npart1 .eq. 0) cycle
+
+    ipart = headp(igrid)
+    do jpart=1, npart1
+      if(is_cloud(typep(ipart))) k = k + 1
+      if(is_cloud(typep(ipart)) .and. idp(ipart) .eq. -3) then
+        nnn = nnn + 1
+        rrx = rrx + xp(ipart,1)
+        rry = rry + xp(ipart,2)
+        rrz = rrz + xp(ipart,3)
+        ind_cell = igrid
+      endif
+      next_part = nextp(ipart)
+      ipart = next_part
+    enddo
+
+    igrid = next(igrid)
+  enddo
+enddo
+
+ii = 0
+jj = 0
+kk = 0
+do ilevel=levelmin, nlevelmax
+  ncache = active(ilevel)%ngrid
+  do igrid=1, ncache
+    index_grid = active(ilevel)%igrid(igrid)
+
+    npart1 = numbp(index_grid)
+    if(npart1 .le. 0) cycle
+    ii = ii + npart1
+
+    ipart = headp(index_grid)
+    do jpart=1, npart1
+      if(is_cloud(typep(ipart))) jj = jj + 1
+      if(is_cloud(typep(ipart)) .and. idp(ipart) .eq. -3) kk = kk + 1
+      ipart = nextp(ipart)
+    enddo
+  enddo
+enddo
+!  ind_cell = 0
+!  ncache = active(levelmin)%ngrid
+!  do igrid=1, ncache, nvector
+!    ngrid = MIN(nvector,ncache-igrid+1)
+!    do i=1, ngrid
+!      index_grid=active(levelmin)%igrid(igrid+i-1)
+!
+!      npart1 = numbp(index_grid)
+!      j = j + npart1
+!      if(npart1 .eq. 0) cycle
+!      ipart = headp(index_grid)
+!      do jpart=1, npart1
+!        if(is_cloud(typep(ipart))) k = k + 1
+!        if(is_cloud(typep(ipart)) .and. idp(ipart) .eq. -3) then
+!          nnn = nnn + 1
+!          rrx = rrx + xp(ipart,1)
+!          rry = rry + xp(ipart,2)
+!          rrz = rrz + xp(ipart,3)
+!          ind_cell = index_grid
+!        endif
+!        next_part = nextp(ipart)
+!        ipart=next_part
+!      enddo
+!    enddo
+!  enddo
+!!----- Update subsub_nsink
+
+!!----- Update subsub_nsink
+  call MPI_ALLREDUCE(l,ll2,1,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,i)
+  call MPI_ALLREDUCE(ii,ii2,1,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,i)
+  call MPI_ALLREDUCE(m,mm2,1,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,i)
+  call MPI_ALLREDUCE(jj,jj2,1,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,i)
+  call MPI_ALLREDUCE(kk,kk2,1,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,i)
+  call MPI_ALLREDUCE(pp,pp2,1,MPI_INTEGER,MPI_SUM,MPI_COMM_WORLD,i)
+
+  if(myid.eq.1) then
+    write(*,*) 'total particles ', ll2, ii2
+    write(*,*) 'total clouds ', mm2, jj2
+    write(*,*) ' 2109 ?', pp2, kk2
+  endif
+
+
+call MPI_BARRIER(MPI_COMM_WORLD, nnn)
+do i=1, ncpu
+  if(myid .eq. i) then
+    write(*,*) 'statistics', myid
+    write(*,*) ' by part ', l, ' by grid ', j, ' by_grid2 ', ii
+    write(*,*) 'C by part ', m, ' by grid', k, ' by_grid2 ', jj
+    write(*,*) '  '
+  endif
+  call MPI_BARRIER(MPI_COMM_WORLD, nnn)
+enddo
+  !write(*,*) 'statistics : ', myid, j,k
+  !if(nnn .gt. 0)then
+  !write(*,*) '-- ', ind_cell
+  !write(*,*) '-- ', nnn, myid
+  !write(*,*) '-- ', rrx/nnn, rry/nnn, rrz/nnn
+  !endif
+
+  call MPI_BARRIER(MPI_COMM_WORLD, nnn)
+
+  call clean_stop
+end subroutine
+subroutine subsub_getcloud(sinkid, x, y, z, clouds, ncloud, nmax)
+
+  use amr_commons
+  use pm_commons
+  use pm_parameters
+  use subsub_parameters
+  use mpi_mod
+  implicit none
+
+  integer :: sinkid, nmax, ncloud
+  real(dp) :: x, y, z
+  !real(dp), dimension(1:twotondim, 1:ndim), intent(in) :: edge
+  real(dp), dimension(1:nmax,1:subsub_nhydro+ndim) :: clouds 
+
+
+  !! Local variables
+  integer :: i, j, k, idim, igrid
+  integer :: ind, ix, iy, iz
+  real(dp) :: dx_min, rmax, dx, dr_cell
+  integer :: ncache
+  integer :: found, ind_cell, ind_grid, ngrid, index_grid, index_cell, iskip
+  real(dp),dimension(1:twotondim,1:3):: xc
+  real(dp),dimension(1:3)::skip_loc, center, tcenter
+
+  logical :: okay, okay2
+
+integer :: npart1, ipart, jpart, next_part, ilevel, nnn
+real(dp) :: rrx, rry, rrz
+
+  !!----- Pre
+  dx_min=0.5d0**(nlevelmax-nlevelsheld)/aexp
+  rmax=dble(ir_cloud)*dx_min
+
+  tcenter = (/x, y, z/)
+  !!----- Get Coarse First
+  do ind=1,twotondim
+    iz=(ind-1)/4
+    iy=(ind-1-4*iz)/2
+    ix=(ind-1-2*iy-4*iz)
+    xc(ind,1)=(dble(ix)-0.5D0)
+    xc(ind,2)=(dble(iy)-0.5D0)
+    xc(ind,3)=(dble(iz)-0.5D0)
+  end do
+
+  skip_loc=(/0.0d0,0.0d0,0.0d0/)
+  skip_loc(1)=dble(icoarse_min)
+  skip_loc(2)=dble(jcoarse_min)
+  skip_loc(3)=dble(kcoarse_min)
+
+
+  ! Find a coarse cell containing (x,y,z)
+  dx=0.5D0**levelmin
+  ncache=active(levelmin)%ngrid
+
+  found = 0
+  ind_cell = -1
+  ind_grid = -1
+
+  !$omp parallel do default(shared) &
+  !$omp & private(ngrid, i, idim, index_grid, index_cell, &
+  !$omp & ind, iskip, center, dr_cell) &
+  !$omp & schedule(dynamic)
+  do igrid=1,ncache,nvector
+
+    if(found /= 0) cycle
+
+    ngrid=MIN(nvector,ncache-igrid+1)
+    do i=1,ngrid
+      index_grid=active(levelmin)%igrid(igrid+i-1)
+
+      do ind=1,twotondim
+        iskip=ncoarse+(ind-1)*ngridmax
+        index_cell=iskip+index_grid
+
+        dr_cell = 0.0d0
+        do idim=1, ndim
+          center(idim) = xg(index_grid,idim)+xc(ind,idim)*dx-skip_loc(idim)
+          dr_cell = MAX(dr_cell, ABS(center(idim)-tcenter(idim)))
+        enddo
+        if(dr_cell.le.dx/2.0) then
+          !$omp critical
+          found = 1
+          ind_cell=index_cell
+          ind_grid=index_grid
+          !$omp end critical
+          exit
+        endif
+      enddo
+
+      if(found .gt. 0) exit
+    end do
+  enddo
+  !$omp end parallel do
+
+
+if(found .eq. 0) then
+  write(*,*) 'not matched !?'
+  stop
+endif
+
+!FROM HERE
+
+  !!----- Recursively walking through AMR cells and retrieve clouds
+  ncloud = 0
+if(myid.eq.26) write(*,*) ind_grid
+
+if(myid.eq.26)then
+  okay2=.false.
+  nnn = 0
+  rrx = 0.
+  rry = 0.
+  rrz = 0.
+
+  ind_cell = 0
+  ncache = active(levelmin)%ngrid
+  do igrid=1, ncache, nvector
+    ngrid = MIN(nvector,ncache-igrid+1)
+    do i=1, ngrid
+      index_grid=active(levelmin)%igrid(igrid+i-1)
+
+      npart1 = numbp(index_grid)
+      if(npart1 .eq. 0) cycle
+      ipart = headp(index_grid)
+      do jpart=1, npart1
+        
+        if(is_cloud(typep(ipart)) .and. idp(ipart) .eq. -sinkid) then
+          nnn = nnn + 1
+          rrx = rrx + xp(ipart,1)
+          rry = rry + xp(ipart,2)
+          rrz = rrz + xp(ipart,3)
+          ind_cell = index_grid
+        endif
+        next_part = nextp(ipart)
+        ipart=next_part
+      enddo
+    enddo
+  enddo
+  write(*,*) ind_grid , ' =?= ', ind_cell, sinkid
+  write(*,*) nnn
+  write(*,*) rrx/nnn, rry/nnn, rrz/nnn
+  stop
+
+  do ilevel=levelmin, nlevelmax
+    ncache=active(ilevel)%ngrid
+
+    do igrid=1, ncache, nvector
+      ngrid=MIN(nvector,ncache-igrid+1)
+
+      do i=1, ngrid
+        index_grid=active(ilevel)%igrid(igrid+i-1)
+
+        okay=.false.
+        do ind=1, 8
+          iskip=ncoarse+(ind-1)*ngridmax
+          ind_cell = iskip+index_grid
+    
+          okay = (son(ind_cell)==0)
+
+          if(okay) exit
+        enddo
+
+        if(okay) then
+          npart1 = numbp(index_grid)
+          if(npart1 .le. 0) cycle
+
+          ipart = headp(index_grid)
+
+          do jpart=1, npart1
+            next_part = nextp(ipart)
+
+            if(is_cloud(typep(ipart)) .and. idp(ipart) .eq. -sinkid) then
+              nnn = nnn + 1
+              rrx = rrx + xp(ipart,1)
+              rry = rry + xp(ipart,2)
+              rrz = rrz + xp(ipart,3)
+            endif
+              !okay2=.true.
+            !if(idp(ipart) .eq. sinkid) okay2=.true.
+
+            if(okay2) exit
+          enddo
+        endif
+
+        if(okay2) exit
+      enddo
+      if(okay2) exit
+    enddo
+    if(okay2) exit
+  enddo
+    write(*,*) 'found here === ', index_grid, ilevel
+    !write(*,*) xp(ipart,1), xp(ipart,2), xp(ipart,3)
+    write(*,*) x, y, z
+
+    write(*,*) nnn, sinkid
+    write(*,*) rrx/nnn, rry/nnn, rrz/nnn
+    !stop
+
+    dx=0.5D0**ilevel
+
+    do ind=1, twotondim
+      write(*,*) ' edge = ', ind
+      write(*,*) 'x0 = ', xg(index_grid,1)+xc(ind,1)*dx-skip_loc(1) - dx/2.0D0
+      write(*,*) 'x1 = ', xg(index_grid,1)+xc(ind,1)*dx-skip_loc(1) + dx/2.0D0
+      write(*,*) 'y0 = ', xg(index_grid,2)+xc(ind,2)*dx-skip_loc(2) - dx/2.0D0
+      write(*,*) 'y1 = ', xg(index_grid,2)+xc(ind,2)*dx-skip_loc(2) + dx/2.0D0
+      write(*,*) 'z0 = ', xg(index_grid,3)+xc(ind,3)*dx-skip_loc(3) - dx/2.0D0
+      write(*,*) 'z1 = ', xg(index_grid,3)+xc(ind,3)*dx-skip_loc(3) + dx/2.0D0
+      write(*,*) ' --- '
+
+    enddo
+  
+    write(*,*) x-rmax, x+rmax
+    write(*,*) y-rmax, y+rmax
+    write(*,*) z-rmax, z+rmax
+
+    stop
+endif
+
+  
+
+  call subsub_walkgrid(xc, skip_loc, sinkid, son(ind_cell), levelmin, x, y, z, rmax, clouds, ncloud, nmax)
+
+if(myid.eq.26)  write(*,*) 'cloud found well? : ', myid, ncloud
+
+end subroutine
+!################################################################
+!################################################################
+!################################################################
+!################################################################
 subroutine subsub_finddomain(x, y, z, mpinum)
   !!-----
   !! This routine finds a domain containing (x, y, z)
@@ -340,6 +879,7 @@ subroutine subsub_sortbyind(subsub_dummy, nn)
     temp = subsub_dummy(i)
     j = i-1
     do while (j >= 1 .and. subsub_dummy(j)%sink_ind > temp%sink_ind)
+      write(*,*) i, j, nn
       subsub_dummy(j+1) = subsub_dummy(j)
       j = j - 1
     enddo
@@ -502,6 +1042,8 @@ subroutine subsub_nbcellinput(ind_cell, ind_level, hvar)
   do ivar=1, subsub_nhydro
     hvar(0,ivar) = uold(ind_cell, ivar)
   enddo
+
+  return
 
   !!-----
   !! Shift to the object frame

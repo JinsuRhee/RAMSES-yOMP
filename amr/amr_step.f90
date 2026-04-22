@@ -215,8 +215,8 @@ recursive subroutine amr_step(ilevel,icount)
      end if
 
      if(subsub_on) then
-                               call timer('subsub - update','start')
-        call subsub_update()
+                               !call timer('subsub - update','start')
+        call subsub_coarse()
      endif
   endif
 
@@ -416,7 +416,16 @@ recursive subroutine amr_step(ilevel,icount)
   if(hydro.and.star.and.stellar_winds) call stellar_winds_fine(ilevel)
   if(checkhydro)call check_uold_unew(ilevel,21)
 
-
+  !---------------
+  ! SUBSUB object update
+  !  ) should be before move_fine
+  !  ) before hydro update (BC as forward Eulerian?)
+  !---------------
+  if(subsub_on) then
+                               call timer('subsub - update','start')
+    
+    call subsub_fine(ilevel)
+  endif
 
 
   !-----------
@@ -512,6 +521,9 @@ recursive subroutine amr_step(ilevel,icount)
   if(checkhydro)call check_uold_unew(ilevel,41)
 #endif
 
+
+
+
   !---------------
   ! Move particles
   !---------------
@@ -529,6 +541,7 @@ recursive subroutine amr_step(ilevel,icount)
                                 call timer('tracer','start')
      call MC_tracer_to_jet(ilevel)
   end if
+
 
 
   !----------------------------------

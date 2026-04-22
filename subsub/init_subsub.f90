@@ -37,6 +37,8 @@ subroutine init_subsub
 
   subsub_poisson_softening = subsub_dx*0.5D0
 
+  subsub_howlong = 0.0D0
+  
   !!-----
   !! allocate
   !!-----
@@ -56,9 +58,16 @@ subroutine init_subsub
   allocate(subsub_faceindz(1:subsub_nnface))
 
   if(allocated(subsub_hydrobc)) deallocate(subsub_hydrobc)
-  allocate(subsub_hydrobc(1:2, 1:ndim, 1:subsub_nhydro))
+  allocate(subsub_hydrobc(1:2, 1:ndim, 1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_nhydro))
+
+  !subsub_ncloudmax = (2*ir_cloud+1)**ndim
+  !allocate(subsub_clouds(1:subsub_ncloudmax, 1:subsub_nhydro+ndim))
+  !allocate(subsub_clouds_ind(1:subsub_ncloudmax))
+  !allocate(subsub_edgeBC(1:nsink))
+
 
   ii2 = 1
+  subsub_poisson_softening = subsub_dx
   !$omp parallel do collapse(3) private(ii, ix, iy, iz, rx, ry, rz)
   do ix=1, subsub_ngrid
   do iy=1, subsub_ngrid

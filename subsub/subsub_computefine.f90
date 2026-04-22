@@ -2,7 +2,7 @@
 !################################################################
 !################################################################
 !################################################################
-subroutine subsub_computefine(objind)
+subroutine subsub_computefine(objind, ilevel)
 !!-----
 !! This routine updates density field in a subsub object
 !! 1) By prescribed boundary face flux
@@ -16,6 +16,7 @@ subroutine subsub_computefine(objind)
   use mpi_mod
   implicit none
   integer :: objind
+  integer :: ilevel
 
   !!----- Local Variables
   !integer :: i
@@ -39,10 +40,10 @@ subroutine subsub_computefine(objind)
   subsub_nstep = 0
 
   !!----- Start Subcycle
-  subsub_dt = dtold(levelmin)
+  !subsub_dt = dtnew(ilevel)
 
   !!----- By Conjugrate-Gradient & KDK & Godunov
-  call subsub_cgkdk(objind)
+  call subsub_cgkdk(objind, ilevel)
 
 
 end subroutine subsub_computefine
@@ -50,7 +51,7 @@ end subroutine subsub_computefine
 !################################################################
 !################################################################
 !################################################################
-subroutine subsub_cgkdk(objind)
+subroutine subsub_cgkdk(objind, ilevel)
   !!----- RHEE -----
   !! Do we need to update mass_tot after the first kick?
   !!----------------
@@ -63,11 +64,13 @@ subroutine subsub_cgkdk(objind)
   use mpi_mod
   implicit none
   integer :: objind
+  integer :: ilevel
   
 
   !! Local variables
-  integer:: i, j, iter, sinkind, ivar
+  integer:: i, j, k, iter, sinkind, ivar
   integer :: ii, ix, iy, iz
+  integer :: ud, idim
   real(dp) :: mpinow
   real(dp) :: maxv, maxv_local
   real(dp) :: newMgas, newMBH
@@ -76,7 +79,7 @@ subroutine subsub_cgkdk(objind)
   real(dp) :: subsub_dt, subsub_t0, subsub_dtmax
   integer :: subsub_nstep
   real(dp) :: gconst, mtot_now, mtot_old, mtot_new, mtot_cell, fourpiG, fact1, fact2, pi
-  !real(dp) ::scale_nH,scale_T2,scale_l,scale_d,scale_t,scale_v
+  real(dp) ::scale_nH,scale_T2,scale_l,scale_d,scale_t,scale_v
   
   real(dp) :: delMass, delMBH, delMgas
   real(dp) :: mass_predicted, rho_ave, tff, vff, threepi2, rho_needed
@@ -85,13 +88,14 @@ subroutine subsub_cgkdk(objind)
   real(dp), dimension(1:subsub_nhydro) :: Utmp
   real(dp) :: debugt
 
-  real(dp) :: subsub_hydrobc_old(1:2, 1:ndim, 1:subsub_nhydro)
+  real(dp) :: subsub_hydrobc_old(1:2, 1:ndim, 1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_nhydro)
+  real(dp) :: maxv_bc
 
   debugt=MPI_WTIME()
   !!-----
   !! constants
   !!-----
-  subsub_dt = dtold(levelmin)
+  subsub_dt = dtnew(ilevel)
   subsub_t0 = 0.0D0
   subsub_nstep = 0
 
@@ -106,8 +110,8 @@ subroutine subsub_cgkdk(objind)
   maxv = 0.0D0
   
 
-  !call units(scale_l,scale_t,scale_d,scale_v,scale_nH,scale_T2)
-  !gconst = 6.67d-8*scale_d*scale_t**2
+  call units(scale_l,scale_t,scale_d,scale_v,scale_nH,scale_T2)
+  gconst = 6.67d-8*scale_d*scale_t**2
 
   gconst=1d0
   pi=twopi/2d0
@@ -135,12 +139,12 @@ subroutine subsub_cgkdk(objind)
   delMgas= subsub_obj(objind)%mass_cell - subsub_obj(objind)%mass_tot !! cell mass is already updated
   delMass = delMgas + delMbh
 
-  subsub_hydrobc(1,1,:) = subsub_obj(objind)%uold(1,:) !! X-
-  subsub_hydrobc(2,1,:) = subsub_obj(objind)%uold(2,:) !! X+
-  subsub_hydrobc(1,2,:) = subsub_obj(objind)%uold(3,:) !! Y-
-  subsub_hydrobc(2,2,:) = subsub_obj(objind)%uold(4,:) !! Y+
-  subsub_hydrobc(1,3,:) = subsub_obj(objind)%uold(5,:) !! Z-
-  subsub_hydrobc(2,3,:) = subsub_obj(objind)%uold(6,:) !! Z+
+  !subsub_hydrobc(1,1,:) = subsub_obj(objind)%uold(1,:) !! X-
+  !subsub_hydrobc(2,1,:) = subsub_obj(objind)%uold(2,:) !! X+
+  !subsub_hydrobc(1,2,:) = subsub_obj(objind)%uold(3,:) !! Y-
+  !subsub_hydrobc(2,2,:) = subsub_obj(objind)%uold(4,:) !! Y+
+  !subsub_hydrobc(1,3,:) = subsub_obj(objind)%uold(5,:) !! Z-
+  !subsub_hydrobc(2,3,:) = subsub_obj(objind)%uold(6,:) !! Z+
 
   
   !! DEBUG MODE FOR SELF-GRAVITY TEST
@@ -148,11 +152,11 @@ subroutine subsub_cgkdk(objind)
   if(subsub_dev_gravonly .eq. 1)then
     do i=1, 2
       do j=1,3
-        subsub_hydrobc(i,j,1) = subsub_dfloor
-        subsub_hydrobc(i,j,2) = 0.0D0
-        subsub_hydrobc(i,j,3) = 0.0D0
-        subsub_hydrobc(i,j,4) = 0.0D0
-        subsub_hydrobc(i,j,5) = 0.0D0
+        subsub_hydrobc(i,j,:,:,1) = subsub_dfloor
+        subsub_hydrobc(i,j,:,:,2) = 0.0D0
+        subsub_hydrobc(i,j,:,:,3) = 0.0D0
+        subsub_hydrobc(i,j,:,:,4) = 0.0D0
+        subsub_hydrobc(i,j,:,:,5) = 0.0D0
       enddo
     enddo
 
@@ -170,11 +174,11 @@ subroutine subsub_cgkdk(objind)
   if(subsub_dev_gravhydro .eq. 1)then
     do i=1, 2
       do j=1,3
-        subsub_hydrobc(i,j,1) = subsub_dfloor
-        subsub_hydrobc(i,j,2) = 0.0D0
-        subsub_hydrobc(i,j,3) = 0.0D0
-        subsub_hydrobc(i,j,4) = 0.0D0
-        subsub_hydrobc(i,j,5) = 0.0D0
+        subsub_hydrobc(i,j,:,:,1) = subsub_dfloor
+        subsub_hydrobc(i,j,:,:,2) = 0.0D0
+        subsub_hydrobc(i,j,:,:,3) = 0.0D0
+        subsub_hydrobc(i,j,:,:,4) = 0.0D0
+        subsub_hydrobc(i,j,:,:,5) = 0.0D0
       enddo
     enddo
 
@@ -187,22 +191,42 @@ subroutine subsub_cgkdk(objind)
   if(subsub_dev_gravhydrobh .eq. 1)then
     do i=1, 2
       do j=1,3
-        subsub_hydrobc(i,j,1) = subsub_dfloor
-        subsub_hydrobc(i,j,2) = 0.0D0
-        subsub_hydrobc(i,j,3) = 0.0D0
-        subsub_hydrobc(i,j,4) = 0.0D0
-        subsub_hydrobc(i,j,5) = 0.0D0
+        subsub_hydrobc(i,j,:,:,1) = subsub_dfloor
+        subsub_hydrobc(i,j,:,:,2) = 0.0D0
+        subsub_hydrobc(i,j,:,:,3) = 0.0D0
+        subsub_hydrobc(i,j,:,:,4) = 0.0D0
+        subsub_hydrobc(i,j,:,:,5) = 0.0D0
       enddo
     enddo
+
+    !! 1e8 MBH at the center
+    fact2   = -gconst * (1.0D7*2.0D33)/(scale_d*scale_l**3)
   endif
-  
 
-  do i=1,2
-    do j=1,3
-      call subsub_enforce_floors(subsub_hydrobc(i,j,:))
+  maxv_bc = 0.0D0
+  do ud=1,2
+    do idim=1,3
+      !$omp parallel do collapse(2) private(i,j,k,Utmp) reduction(max:maxv_bc)
+      do i=1, subsub_ngrid
+        do j=1, subsub_ngrid
+          do k=1, subsub_nhydro
+            Utmp(k) = subsub_obj(objind)%faceBC(ud,idim,i,j,k)
+          enddo
+          call subsub_enforce_floors(Utmp)
 
-      !! save the original bc
-      subsub_hydrobc_old(i,j,:) = subsub_hydrobc(i,j,:)
+          if(Utmp(1).gt.subsub_dfloor)then
+            maxv_bc = max(maxv_bc, abs(Utmp(2)/Utmp(1)))
+            maxv_bc = max(maxv_bc, abs(Utmp(3)/Utmp(1)))
+            maxv_bc = max(maxv_bc, abs(Utmp(4)/Utmp(1)))
+          endif
+
+          !! save the original bc
+          do k=1, subsub_nhydro
+            subsub_hydrobc_old(ud,idim,i,j,k) = Utmp(k)
+          enddo
+        enddo
+      enddo
+      !$omp end parallel do
     enddo
   enddo
 
@@ -287,6 +311,7 @@ subroutine subsub_cgkdk(objind)
     !$omp do private(ivar, Utmp)
     do i=1, subsub_nn
       subsub_phi(i) = subsub_obj(objind)%phi(i)
+      subsub_phibh(i) = subsub_obj(objind)%phi_bh(i)
 
       do ivar=1,subsub_nhydro
         Utmp(ivar) = subsub_obj(objind)%hydro(i,ivar)
@@ -300,26 +325,54 @@ subroutine subsub_cgkdk(objind)
     !$omp end do
 
 
-!$omp single
-if(subsub_obj(objind)%sink_id .eq. 3)then
-  subsub_debugtag = 1
-  write(*,*)'     niter        = ', subsub_nstep
-  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
-  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
+!!$omp single
+!!if(subsub_obj(objind)%sink_id .eq. 3)then
+!if(myid.eq.4)then
+!  subsub_debugtag = 1
+!  write(*,*)'     niter        = ', subsub_nstep
+!  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
+!  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
+!
+!  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
+!  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
+!
+!  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
+!  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
+!
+!  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
+!  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
+!
+!  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
+!  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
+!
+!  write(*,*)'     BC rhomin       = ', minval(subsub_hydrobc(:,:,:,:,1))
+!  write(*,*)'     BC rhomax       = ', maxval(subsub_hydrobc(:,:,:,:,1))
+!
+!  write(*,*)'     BC vxmin       = ', minval(subsub_hydrobc(:,:,:,:,2))
+!  write(*,*)'     BC vxmax       = ', maxval(subsub_hydrobc(:,:,:,:,2))
+!  write(*,*)'     BC vymin       = ', minval(subsub_hydrobc(:,:,:,:,3))
+!  write(*,*)'     BC vymax       = ', maxval(subsub_hydrobc(:,:,:,:,3))
+!  write(*,*)'     BC vzmin       = ', minval(subsub_hydrobc(:,:,:,:,4))
+!  write(*,*)'     BC vzmax       = ', maxval(subsub_hydrobc(:,:,:,:,4))
+!
+!  write(*,*)'     BC Emin       = ', minval(subsub_hydrobc(:,:,:,:,5))
+!  write(*,*)'     BC Emax       = ', maxval(subsub_hydrobc(:,:,:,:,5))
+!  
+!
+!  write(*,*)'     fact2       = ', fact2
+!  write(*,*)'       '
+!endif
+!!$omp end single
 
-  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
-  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
+!!-----------------------------------------------------------------
+!! Save Phi from Sink
+!!-----------------------------------------------------------------
+  !$omp do
+  do i=1, subsub_nn
+    subsub_phibh(i) = fact2/subsub_dd(i)
+  enddo
+  !$omp end do
 
-  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
-  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
-
-  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
-  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
-
-  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
-  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
-endif
-!$omp end single
 
 !!-----------------------------------------------------------------
 !! Compute Phi by CG (rho_n -> phi_n)
@@ -341,7 +394,7 @@ endif
 !!-----------------------------------------------------------------
 !! Compute g_n+1
 !!-----------------------------------------------------------------
-    call subsub_poisson_g(fact2)
+    call subsub_poisson_g
 
 #ifndef WITHOUTMPI
     !$omp single
@@ -355,15 +408,15 @@ endif
 !! Determine dt by CFL (updated velocity + sound speed)
 !!-----------------------------------------------------------------
     !$omp single
-    maxv = 0.0D0
-    maxv = max(maxv, maxval( abs(subsub_hydrobc(1,1,2:4)) / max(subsub_hydrobc(1,1,1), subsub_dfloor) ))
-    maxv = max(maxv, maxval( abs(subsub_hydrobc(2,1,2:4)) / max(subsub_hydrobc(2,1,1), subsub_dfloor) ))
-
-    maxv = max(maxv, maxval( abs(subsub_hydrobc(1,2,2:4)) / max(subsub_hydrobc(1,2,1), subsub_dfloor) ))
-    maxv = max(maxv, maxval( abs(subsub_hydrobc(2,2,2:4)) / max(subsub_hydrobc(2,2,1), subsub_dfloor) ))
-
-    maxv = max(maxv, maxval( abs(subsub_hydrobc(1,3,2:4)) / max(subsub_hydrobc(1,3,1), subsub_dfloor) ))
-    maxv = max(maxv, maxval( abs(subsub_hydrobc(2,3,2:4)) / max(subsub_hydrobc(2,3,1), subsub_dfloor) ))
+    maxv = maxv_bc
+!    maxv = max(maxv, maxval( abs(subsub_hydrobc(1,1,2:4)) / max(subsub_hydrobc(1,1,1), subsub_dfloor) ))
+!    maxv = max(maxv, maxval( abs(subsub_hydrobc(2,1,2:4)) / max(subsub_hydrobc(2,1,1), subsub_dfloor) ))
+!
+!    maxv = max(maxv, maxval( abs(subsub_hydrobc(1,2,2:4)) / max(subsub_hydrobc(1,2,1), subsub_dfloor) ))
+!    maxv = max(maxv, maxval( abs(subsub_hydrobc(2,2,2:4)) / max(subsub_hydrobc(2,2,1), subsub_dfloor) ))
+!
+!    maxv = max(maxv, maxval( abs(subsub_hydrobc(1,3,2:4)) / max(subsub_hydrobc(1,3,1), subsub_dfloor) ))
+!    maxv = max(maxv, maxval( abs(subsub_hydrobc(2,3,2:4)) / max(subsub_hydrobc(2,3,1), subsub_dfloor) ))
 
     maxv_local = 0.0D0
     !$omp end single
@@ -402,7 +455,7 @@ endif
     maxv = max(maxv, maxv_local)
 
     if(maxv .lt. subsub_smallr) then
-      subsub_dtmax = dtold(levelmin) - subsub_t0
+      subsub_dtmax = dtnew(ilevel) - subsub_t0
     else
       subsub_dtmax = subsub_cfl * (subsub_dx / maxv)
     endif
@@ -417,7 +470,7 @@ endif
       subsub_dt = 2.0D0 * subsub_dt
     enddo
 
-    subsub_dt = min(subsub_dt, dtold(levelmin) - subsub_t0)
+    subsub_dt = min(subsub_dt, dtnew(ilevel) - subsub_t0)
     !$omp end single
 
 #ifndef WITHOUTMPI
@@ -437,7 +490,7 @@ endif
 !!----- RHEE -----
 !! turn off at the moment
 !!----------------
-      mass_predicted = (mtot_cell - mtot_old) / dtold(levelmin) * subsub_t0 + mtot_old
+      mass_predicted = (mtot_cell - mtot_old) / dtnew(ilevel) * subsub_t0 + mtot_old
 
       
       
@@ -445,97 +498,98 @@ endif
         !! now the total cell mass is less than the predicted mass
         !! hence, turn on the mass inflwo with the free-fall normal
 
-        rho_ave = mtot_now / (subsub_boxlen**3)
-        tff = sqrt(threepi2/8./fourpiG/rho_ave)
-        vff = subsub_boxlen/tff
-
-        rho_needed = 6.0D0 * (mass_predicted - mtot_now) / vff / subsub_dt / subsub_boxlen**2
-
-        if(rho_needed .gt. subsub_dfloor) then
-          r = subsub_hydrobc(1,1,1)
-          u = subsub_hydrobc(1,1,2) / r
-          v = subsub_hydrobc(1,1,3) / r
-          w = subsub_hydrobc(1,1,4) / r
-          p = max((gamma - 1.0D0)*(subsub_hydrobc(1,1,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
-  
-          subsub_hydrobc(1,1,1) = rho_needed
-          subsub_hydrobc(1,1,2) = subsub_hydrobc(1,1,1)*vff
-          subsub_hydrobc(1,1,3) = 0.0D0
-          subsub_hydrobc(1,1,4) = 0.0D0
-          subsub_hydrobc(1,1,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
-  
-  
-          r = subsub_hydrobc(2,1,1)
-          u = subsub_hydrobc(2,1,2) / r
-          v = subsub_hydrobc(2,1,3) / r
-          w = subsub_hydrobc(2,1,4) / r
-          p = max((gamma - 1.0D0)*(subsub_hydrobc(2,1,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
-  
-          subsub_hydrobc(2,1,1) = rho_needed
-          subsub_hydrobc(2,1,2) = -subsub_hydrobc(2,1,1)*vff
-          subsub_hydrobc(2,1,3) = 0.0D0
-          subsub_hydrobc(2,1,4) = 0.0D0
-          subsub_hydrobc(2,1,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
-  
-  
-          r = subsub_hydrobc(1,2,1)
-          u = subsub_hydrobc(1,2,2) / r
-          v = subsub_hydrobc(1,2,3) / r
-          w = subsub_hydrobc(1,2,4) / r
-          p = max((gamma - 1.0D0)*(subsub_hydrobc(1,2,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
-  
-          subsub_hydrobc(1,2,1) = rho_needed
-          subsub_hydrobc(1,2,2) = 0.0D0
-          subsub_hydrobc(1,2,3) = subsub_hydrobc(1,2,1)*vff
-          subsub_hydrobc(1,2,4) = 0.0D0
-          subsub_hydrobc(1,2,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
-  
-  
-  
-          r = subsub_hydrobc(2,2,1)
-          u = subsub_hydrobc(2,2,2) / r
-          v = subsub_hydrobc(2,2,3) / r
-          w = subsub_hydrobc(2,2,4) / r
-          p = max((gamma - 1.0D0)*(subsub_hydrobc(2,2,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
-  
-          subsub_hydrobc(2,2,1) = rho_needed
-          subsub_hydrobc(2,2,2) = 0.0D0
-          subsub_hydrobc(2,2,3) = -subsub_hydrobc(2,2,1)*vff
-          subsub_hydrobc(2,2,4) = 0.0D0
-          subsub_hydrobc(2,2,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
-  
-  
-  
-          r = subsub_hydrobc(1,3,1)
-          u = subsub_hydrobc(1,3,2) / r
-          v = subsub_hydrobc(1,3,3) / r
-          w = subsub_hydrobc(1,3,4) / r
-          p = max((gamma - 1.0D0)*(subsub_hydrobc(1,3,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
-  
-          subsub_hydrobc(1,3,1) = rho_needed
-          subsub_hydrobc(1,3,2) = 0.0D0
-          subsub_hydrobc(1,3,3) = 0.0D0
-          subsub_hydrobc(1,3,4) = subsub_hydrobc(1,3,1)*vff
-          subsub_hydrobc(1,3,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
-  
-  
-  
-          r = subsub_hydrobc(2,3,1)
-          u = subsub_hydrobc(2,3,2) / r
-          v = subsub_hydrobc(2,3,3) / r
-          w = subsub_hydrobc(2,3,4) / r
-          p = max((gamma - 1.0D0)*(subsub_hydrobc(2,3,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
-  
-          subsub_hydrobc(2,3,1) = rho_needed
-          subsub_hydrobc(2,3,2) = 0.0D0
-          subsub_hydrobc(2,3,3) = 0.0D0
-          subsub_hydrobc(2,3,4) = -subsub_hydrobc(2,3,1)*vff
-          subsub_hydrobc(2,3,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
-        endif
+!        rho_ave = mtot_now / (subsub_boxlen**3)
+!        tff = sqrt(threepi2/8./fourpiG/rho_ave)
+!        vff = subsub_boxlen/tff
+!
+!        rho_needed = 6.0D0 * (mass_predicted - mtot_now) / vff / subsub_dt / subsub_boxlen**2
+!
+!        if(rho_needed .gt. subsub_dfloor) then
+!          r = subsub_hydrobc(1,1,1)
+!          u = subsub_hydrobc(1,1,2) / r
+!          v = subsub_hydrobc(1,1,3) / r
+!          w = subsub_hydrobc(1,1,4) / r
+!          p = max((gamma - 1.0D0)*(subsub_hydrobc(1,1,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
+!  
+!          subsub_hydrobc(1,1,1) = rho_needed
+!          subsub_hydrobc(1,1,2) = subsub_hydrobc(1,1,1)*vff
+!          subsub_hydrobc(1,1,3) = 0.0D0
+!          subsub_hydrobc(1,1,4) = 0.0D0
+!          subsub_hydrobc(1,1,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
+!  
+!  
+!          r = subsub_hydrobc(2,1,1)
+!          u = subsub_hydrobc(2,1,2) / r
+!          v = subsub_hydrobc(2,1,3) / r
+!          w = subsub_hydrobc(2,1,4) / r
+!          p = max((gamma - 1.0D0)*(subsub_hydrobc(2,1,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
+!  
+!          subsub_hydrobc(2,1,1) = rho_needed
+!          subsub_hydrobc(2,1,2) = -subsub_hydrobc(2,1,1)*vff
+!          subsub_hydrobc(2,1,3) = 0.0D0
+!          subsub_hydrobc(2,1,4) = 0.0D0
+!          subsub_hydrobc(2,1,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
+!  
+!  
+!          r = subsub_hydrobc(1,2,1)
+!          u = subsub_hydrobc(1,2,2) / r
+!          v = subsub_hydrobc(1,2,3) / r
+!          w = subsub_hydrobc(1,2,4) / r
+!          p = max((gamma - 1.0D0)*(subsub_hydrobc(1,2,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
+!  
+!          subsub_hydrobc(1,2,1) = rho_needed
+!          subsub_hydrobc(1,2,2) = 0.0D0
+!          subsub_hydrobc(1,2,3) = subsub_hydrobc(1,2,1)*vff
+!          subsub_hydrobc(1,2,4) = 0.0D0
+!          subsub_hydrobc(1,2,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
+!  
+!  
+!  
+!          r = subsub_hydrobc(2,2,1)
+!          u = subsub_hydrobc(2,2,2) / r
+!          v = subsub_hydrobc(2,2,3) / r
+!          w = subsub_hydrobc(2,2,4) / r
+!          p = max((gamma - 1.0D0)*(subsub_hydrobc(2,2,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
+!  
+!          subsub_hydrobc(2,2,1) = rho_needed
+!          subsub_hydrobc(2,2,2) = 0.0D0
+!          subsub_hydrobc(2,2,3) = -subsub_hydrobc(2,2,1)*vff
+!          subsub_hydrobc(2,2,4) = 0.0D0
+!          subsub_hydrobc(2,2,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
+!  
+!  
+!  
+!          r = subsub_hydrobc(1,3,1)
+!          u = subsub_hydrobc(1,3,2) / r
+!          v = subsub_hydrobc(1,3,3) / r
+!          w = subsub_hydrobc(1,3,4) / r
+!          p = max((gamma - 1.0D0)*(subsub_hydrobc(1,3,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
+!  
+!          subsub_hydrobc(1,3,1) = rho_needed
+!          subsub_hydrobc(1,3,2) = 0.0D0
+!          subsub_hydrobc(1,3,3) = 0.0D0
+!          subsub_hydrobc(1,3,4) = subsub_hydrobc(1,3,1)*vff
+!          subsub_hydrobc(1,3,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
+!  
+!  
+!  
+!          r = subsub_hydrobc(2,3,1)
+!          u = subsub_hydrobc(2,3,2) / r
+!          v = subsub_hydrobc(2,3,3) / r
+!          w = subsub_hydrobc(2,3,4) / r
+!          p = max((gamma - 1.0D0)*(subsub_hydrobc(2,3,5) - 0.5D0*r*(u*u + v*v + w*w)), subsub_pfloor)
+!  
+!          subsub_hydrobc(2,3,1) = rho_needed
+!          subsub_hydrobc(2,3,2) = 0.0D0
+!          subsub_hydrobc(2,3,3) = 0.0D0
+!          subsub_hydrobc(2,3,4) = -subsub_hydrobc(2,3,1)*vff
+!          subsub_hydrobc(2,3,5) = p/(gamma-1.0D0) * 0.5D0*rho_needed*vff*vff
+!        endif
       else 
-        subsub_hydrobc(:,:,:) = subsub_hydrobc_old(:,:,:)
+        subsub_hydrobc(:,:,:,:,:) = subsub_hydrobc_old(:,:,:,:,:)
       endif
     endif
+    subsub_hydrobc(:,:,:,:,:) = subsub_hydrobc_old(:,:,:,:,:)
     !$omp end single
 
 !
@@ -590,26 +644,26 @@ endif
 !!-----------------------------------------------------------------
     call subsub_kick(subsub_dt/2.0D0)
 
-!$omp single
-if(subsub_obj(objind)%sink_id .eq. 3)then
-  write(*,*)'         first kick'
-  write(*,*)'     niter        = ', subsub_nstep
-  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
-  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
-
-  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
-  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
-
-  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
-  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
-
-  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
-  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
-
-  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
-  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
-endif
-!$omp end single
+!!$omp single
+!if(subsub_obj(objind)%sink_id .eq. 3)then
+!  write(*,*)'         first kick'
+!  write(*,*)'     niter        = ', subsub_nstep
+!  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
+!  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
+!
+!  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
+!  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
+!
+!  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
+!  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
+!
+!  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
+!  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
+!
+!  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
+!  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
+!endif
+!!$omp end single
 
 #ifndef WITHOUTMPI
     !$omp single
@@ -624,26 +678,26 @@ endif
 !!-----------------------------------------------------------------
     call subsub_drift(subsub_dt)
 
-!$omp single
-if(subsub_obj(objind)%sink_id .eq. 3)then
-  write(*,*)'            after drift'
-  write(*,*)'     niter        = ', subsub_nstep
-  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
-  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
-
-  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
-  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
-
-  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
-  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
-
-  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
-  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
-
-  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
-  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
-endif
-!$omp end single
+!!$omp single
+!if(subsub_obj(objind)%sink_id .eq. 3)then
+!  write(*,*)'            after drift'
+!  write(*,*)'     niter        = ', subsub_nstep
+!  write(*,*)'     maxrho       = ', maxval(subsub_hydro(:,1))
+!  write(*,*)'     minrho       = ', minval(subsub_hydro(:,1))
+!
+!  write(*,*)'     maxE       = ', maxval(subsub_hydro(:,5))
+!  write(*,*)'     minE       = ', minval(subsub_hydro(:,5))
+!
+!  write(*,*)'     maxPx       = ', maxval(subsub_hydro(:,2))
+!  write(*,*)'     minPx       = ', minval(subsub_hydro(:,2))
+!
+!  write(*,*)'     maxPy       = ', maxval(subsub_hydro(:,3))
+!  write(*,*)'     minPy       = ', minval(subsub_hydro(:,3))
+!
+!  write(*,*)'     maxPz       = ', maxval(subsub_hydro(:,4))
+!  write(*,*)'     minPz       = ', minval(subsub_hydro(:,4))
+!endif
+!!$omp end single
 
     !$omp single
 #ifndef WITHOUTMPI
@@ -684,7 +738,7 @@ endif
 !!-----------------------------------------------------------------
 !! Compute g_n+1
 !!-----------------------------------------------------------------
-    call subsub_poisson_g(fact2)
+    call subsub_poisson_g
  
 #ifndef WITHOUTMPI
     !$omp single
@@ -711,6 +765,7 @@ endif
     !$omp do
     do i=1, subsub_nn
       subsub_obj(objind)%phi(i) = subsub_phi(i)
+      subsub_obj(objind)%phi_bh(i) = subsub_phibh(i)
       subsub_obj(objind)%hydro(i,1) = subsub_hydro(i,1)
       subsub_obj(objind)%hydro(i,2) = subsub_hydro(i,2)
       subsub_obj(objind)%hydro(i,3) = subsub_hydro(i,3)
@@ -723,13 +778,13 @@ endif
     subsub_obj(objind)%mass_tot = mtot_now
     !$omp end single
 
-!$omp single
-if(subsub_obj(objind)%sink_id .eq. 3)then
-  write(*,*)'              niter        = ', subsub_nstep
-  write(*,*)'              maxrho       = ', maxval(subsub_hydro(:,1))
-  write(*,*)'              minrho       = ', minval(subsub_hydro(:,1))
-endif
-!$omp end single
+!!$omp single
+!if(subsub_obj(objind)%sink_id .eq. 3)then
+!  write(*,*)'              niter        = ', subsub_nstep
+!  write(*,*)'              maxrho       = ', maxval(subsub_hydro(:,1))
+!  write(*,*)'              minrho       = ', minval(subsub_hydro(:,1))
+!endif
+!!$omp end single
 !!-----------------------------------------------------------------
 !! Main Loop Control
 !!-----------------------------------------------------------------
@@ -737,7 +792,7 @@ endif
     subsub_t0 = subsub_t0 + subsub_dt
     subsub_nstep = subsub_nstep + 1
     
-    if(subsub_t0 .ge. dtold(levelmin))then
+    if(subsub_t0 .ge. dtnew(ilevel))then
       isexit = .true.
     endif
     !$omp end single
@@ -747,6 +802,7 @@ endif
 
 
   subsub_ncheck_cg(1) = subsub_nstep
+
 
 end subroutine subsub_cgkdk
 !################################################################
@@ -993,7 +1049,7 @@ end subroutine subsub_poisson_cg
 !################################################################
 !################################################################
 !################################################################
-subroutine subsub_poisson_g(fact)
+subroutine subsub_poisson_g
   use subsub_commons
   use subsub_parameters
 
@@ -1001,6 +1057,7 @@ subroutine subsub_poisson_g(fact)
   real(dp) :: fact
   !! Local variables
   integer :: i, ix, iy, iz, ii, xu, xd, yu, yd, zu, zd
+  real(dp) :: pxu, pxd, pyu, pyd, pzu, pzd, dxdum
   !real(dp) ::scale_nH,scale_T2,scale_l,scale_d,scale_t,scale_v
   real(dp) :: subsub_twodx
 
@@ -1023,7 +1080,7 @@ subroutine subsub_poisson_g(fact)
 
 
   !$omp do collapse(2) &
-  !$omp & private(ix, iy, iz, ii, xu, xd, yu, yd, zu, zd)
+  !$omp & private(ix, iy, iz, ii, xu, xd, yu, yd, zu, zd, pxu, pxd, pyu, pyd, pzu, pzd)
   do iz=2, subsub_ngrid-1
   do iy=2, subsub_ngrid-1
   do ix=2, subsub_ngrid-1
@@ -1036,20 +1093,30 @@ subroutine subsub_poisson_g(fact)
     zu = ii + subsub_ngrid2
     zd = ii - subsub_ngrid2
 
-    subsub_fg(ii,1) = - (subsub_phi(xu) - subsub_phi(xd)) / subsub_twodx
-    subsub_fg(ii,2) = - (subsub_phi(yu) - subsub_phi(yd)) / subsub_twodx
-    subsub_fg(ii,3) = - (subsub_phi(zu) - subsub_phi(zd)) / subsub_twodx
+    pxu = subsub_phi(xu) + subsub_phibh(xu)
+    pxd = subsub_phi(xd) + subsub_phibh(xd)
+    pyu = subsub_phi(yu) + subsub_phibh(yu)
+    pyd = subsub_phi(yd) + subsub_phibh(yd)
+    pzu = subsub_phi(zu) + subsub_phibh(zu)
+    pzd = subsub_phi(zd) + subsub_phibh(zd)
+
+    subsub_fg(ii,1) = -(pxu - pxd) / subsub_twodx
+    subsub_fg(ii,2) = -(pyu - pyd) / subsub_twodx
+    subsub_fg(ii,3) = -(pzu - pzd) / subsub_twodx
+    !subsub_fg(ii,1) = - (subsub_phi(xu) - subsub_phi(xd)) / subsub_twodx
+    !subsub_fg(ii,2) = - (subsub_phi(yu) - subsub_phi(yd)) / subsub_twodx
+    !subsub_fg(ii,3) = - (subsub_phi(zu) - subsub_phi(zd)) / subsub_twodx
 
     !! Additional Potential from the sink particle
-    subsub_fg(ii,1) = subsub_fg(ii,1) - (fact / subsub_dd(xu) - fact / subsub_dd(xd)) / subsub_twodx
-    subsub_fg(ii,2) = subsub_fg(ii,2) - (fact / subsub_dd(yu) - fact / subsub_dd(yd)) / subsub_twodx
-    subsub_fg(ii,3) = subsub_fg(ii,3) - (fact / subsub_dd(zu) - fact / subsub_dd(zd)) / subsub_twodx
+    !subsub_fg(ii,1) = subsub_fg(ii,1) - (fact / subsub_dd(xu) - fact / subsub_dd(xd)) / subsub_twodx
+    !subsub_fg(ii,2) = subsub_fg(ii,2) - (fact / subsub_dd(yu) - fact / subsub_dd(yd)) / subsub_twodx
+    !subsub_fg(ii,3) = subsub_fg(ii,3) - (fact / subsub_dd(zu) - fact / subsub_dd(zd)) / subsub_twodx
   enddo
   enddo
   enddo
   !$omp end do
 
-  !$omp do private(ii, ix, iy, iz)
+  !$omp do private(ii, ix, iy, iz, xu, xd, yu, yd, zu, zd, pxu, pxd, pyu, pyd, pzu, pzd, dxdum)
   do i=1, subsub_nnface
     ii = subsub_faceind(i)
     ix = subsub_faceindx(i)
@@ -1063,47 +1130,43 @@ subroutine subsub_poisson_g(fact)
     zu = ii + subsub_ngrid2
     zd = ii - subsub_ngrid2
 
-    if(ix.eq.1) then
-      subsub_fg(ii,1) = - (subsub_phi(xu) - subsub_phi(ii)) / subsub_dx
-
-      subsub_fg(ii,1) = subsub_fg(ii,1) - (fact / subsub_dd(xu) - fact / subsub_dd(ii)) / subsub_dx
-    else if(ix .eq. subsub_ngrid) then
-      subsub_fg(ii,1) = - (subsub_phi(ii) - subsub_phi(xd)) / subsub_dx
-
-      subsub_fg(ii,1) = subsub_fg(ii,1) - (fact / subsub_dd(ii) - fact / subsub_dd(xd)) / subsub_dx
-    else
-      subsub_fg(ii,1) = - (subsub_phi(xu) - subsub_phi(xd)) / (2.0D0*subsub_dx)
-
-      subsub_fg(ii,1) = subsub_fg(ii,1) - (fact / subsub_dd(xu) - fact / subsub_dd(xd)) / subsub_twodx
+    dxdum = subsub_twodx
+    if(ix.eq.1)then
+      xd = ii
+      dxdum = subsub_dx
+    endif
+    if(ix.eq. subsub_ngrid)then
+      xu = ii
+      dxdum = subsub_dx
+    endif
+    if(iy.eq.1)then
+      yd = ii
+      dxdum = subsub_dx
+    endif
+    if(iy.eq. subsub_ngrid)then
+      yu = ii
+      dxdum = subsub_dx
+    endif
+    if(iz.eq.1)then
+      zd = ii
+      dxdum = subsub_dx
+    endif
+    if(iz.eq. subsub_ngrid)then
+      zu = ii
+      dxdum = subsub_dx
     endif
 
-    if(iy.eq.1) then
-      subsub_fg(ii,2) = - (subsub_phi(yu) - subsub_phi(ii)) / subsub_dx
+    pxu = subsub_phi(xu) + subsub_phibh(xu)
+    pxd = subsub_phi(xd) + subsub_phibh(xd)
+    pyu = subsub_phi(yu) + subsub_phibh(yu)
+    pyd = subsub_phi(yd) + subsub_phibh(yd)
+    pzu = subsub_phi(zu) + subsub_phibh(zu)
+    pzd = subsub_phi(zd) + subsub_phibh(zd)
 
-      subsub_fg(ii,2) = subsub_fg(ii,2) - (fact / subsub_dd(yu) - fact / subsub_dd(ii)) / subsub_dx
-    else if(iy .eq. subsub_ngrid) then
-      subsub_fg(ii,2) = - (subsub_phi(ii) - subsub_phi(yd)) / subsub_dx
+    subsub_fg(ii,1) = -(pxu - pxd) / dxdum
+    subsub_fg(ii,2) = -(pyu - pyd) / dxdum
+    subsub_fg(ii,3) = -(pzu - pzd) / dxdum
 
-      subsub_fg(ii,2) = subsub_fg(ii,2) - (fact / subsub_dd(ii) - fact / subsub_dd(yd)) / subsub_dx
-    else
-      subsub_fg(ii,2) = - (subsub_phi(yu) - subsub_phi(yd)) / (2.0D0*subsub_dx)
-
-      subsub_fg(ii,2) = subsub_fg(ii,2) - (fact / subsub_dd(yu) - fact / subsub_dd(yd)) / subsub_twodx
-    endif
-
-    if(iz.eq.1) then
-      subsub_fg(ii,3) = - (subsub_phi(zu) - subsub_phi(ii)) / subsub_dx
-
-      subsub_fg(ii,3) = subsub_fg(ii,3) - (fact / subsub_dd(zu) - fact / subsub_dd(ii)) / subsub_dx
-    else if(iz .eq. subsub_ngrid) then
-      subsub_fg(ii,3) = - (subsub_phi(ii) - subsub_phi(zd)) / subsub_dx
-
-      subsub_fg(ii,3) = subsub_fg(ii,3) - (fact / subsub_dd(ii) - fact / subsub_dd(zd)) / subsub_dx
-    else
-      subsub_fg(ii,3) = - (subsub_phi(zu) - subsub_phi(zd)) / (2.0D0*subsub_dx)
-
-      subsub_fg(ii,3) = subsub_fg(ii,3) - (fact / subsub_dd(zu) - fact / subsub_dd(zd)) / subsub_twodx
-    endif
   enddo
   !$omp end do
 end subroutine subsub_poisson_g
@@ -1255,18 +1318,19 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
   implicit none
 
   real(dp) :: dt
-  real(dp), dimension(1:2, 1:ndim, 1:subsub_nhydro, 1:5) :: hbc
+  !real(dp), dimension(1:2, 1:ndim, 1:subsub_nhydro, 1:5) :: hbc
+  real(dp), dimension(1:2, 1:ndim, 1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_nhydro, 1:5) :: hbc
   !! Local variables
-  integer :: ivar, i, j
+  integer :: ivar, i, j, ud, idim
   integer :: ix, iy, iz
   integer :: ii, xu, xd, yu, yd, zu, zd
   integer :: ixu, ixd, iyu, iyd, izu, izd
   real(dp) :: amaxL, amaxR, lam, ekin, bc_vv, bc_cs, drho, dfac, pnew
   
   real(dp), dimension(1:subsub_nhydro) :: FL, FR, Utmp, bc_flux, bc_cons
-  real(dp), dimension(1:2, 1:ndim) :: csarr_bc
+  !real(dp), dimension(1:2, 1:ndim) :: csarr_bc
   logical :: isodd, okay
-
+  real(dp), dimension(1:2, 1:ndim, 1:subsub_ngrid, 1:subsub_ngrid) :: csarr_bc
 
   !1 conservative old
   !2 primitive old
@@ -1279,124 +1343,180 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
   isodd = mod(subsub_ngrid,2) .eq. 1
 
   !----- Set boundary
+  
+  !$omp do collapse(2) private(ud, idim, i,j,ivar,ekin)
+  do i=1,subsub_ngrid
+    do j=1, subsub_ngrid
+      do ud=1,2
+        do idim=1,ndim
+
+          !! Conservative
+          do ivar=1, subsub_nhydro
+            hbc(ud,idim,i,j,ivar,1) = subsub_hydrobc(ud,idim,i,j,ivar)
+          enddo
+
+          !! Primitive
+          hbc(ud,idim,i,j,1,2) = subsub_hydrobc(ud,idim,i,j,1)
+          hbc(ud,idim,i,j,2,2) = subsub_hydrobc(ud,idim,i,j,2)/subsub_hydrobc(ud,idim,i,j,1)
+          hbc(ud,idim,i,j,3,2) = subsub_hydrobc(ud,idim,i,j,3)/subsub_hydrobc(ud,idim,i,j,1)
+          hbc(ud,idim,i,j,4,2) = subsub_hydrobc(ud,idim,i,j,4)/subsub_hydrobc(ud,idim,i,j,1)
+
+          ekin = 0.5D0 * hbc(ud,idim,i,j,1,1)*( hbc(ud,idim,i,j,2,2)**2 + hbc(ud,idim,i,j,3,2)**2 + hbc(ud,idim,i,j,4,2)**2 )
+          hbc(ud,idim,i,j,5,2) = max((gamma-1.0D0)*(hbc(ud,idim,i,j,5,1) - ekin), subsub_pfloor)
+
+        enddo
+
+        !! X Face
+        hbc(ud,1,i,j,1,3) = hbc(ud,1,i,j,2,1)
+        hbc(ud,1,i,j,2,3) = hbc(ud,1,i,j,2,1)*hbc(ud,1,i,j,2,2) + hbc(ud,1,i,j,5,2)
+        hbc(ud,1,i,j,3,3) = hbc(ud,1,i,j,3,1)*hbc(ud,1,i,j,2,2)
+        hbc(ud,1,i,j,4,3) = hbc(ud,1,i,j,4,1)*hbc(ud,1,i,j,2,2)
+        hbc(ud,1,i,j,5,3) = (hbc(ud,1,i,j,5,1) + hbc(ud,1,i,j,5,2)) * hbc(ud,1,i,j,2,2)
+
+        !! Y Face
+        hbc(ud,2,i,j,1,4) = hbc(ud,2,i,j,3,1)
+        hbc(ud,2,i,j,2,4) = hbc(ud,2,i,j,2,1)*hbc(ud,2,i,j,3,2)
+        hbc(ud,2,i,j,3,4) = hbc(ud,2,i,j,3,1)*hbc(ud,2,i,j,3,2) + hbc(ud,2,i,j,5,2)
+        hbc(ud,2,i,j,4,4) = hbc(ud,2,i,j,4,1)*hbc(ud,2,i,j,3,2)
+        hbc(ud,2,i,j,5,4) = (hbc(ud,2,i,j,5,1) + hbc(ud,2,i,j,5,2)) * hbc(ud,2,i,j,3,2)
+
+        !! Z Face
+        hbc(ud,3,i,j,1,5) = hbc(ud,3,i,j,4,1)
+        hbc(ud,3,i,j,2,5) = hbc(ud,3,i,j,2,1)*hbc(ud,3,i,j,4,2)
+        hbc(ud,3,i,j,3,5) = hbc(ud,3,i,j,3,1)*hbc(ud,3,i,j,4,2)
+        hbc(ud,3,i,j,4,5) = hbc(ud,3,i,j,4,1)*hbc(ud,3,i,j,4,2) + hbc(ud,3,i,j,5,2)
+        hbc(ud,3,i,j,5,5) = (hbc(ud,3,i,j,5,1) + hbc(ud,3,i,j,5,2)) * hbc(ud,3,i,j,4,2)
+      enddo
+    enddo
+  enddo
+  !$omp end do
+
+
+
   !! Conservative
-  hbc(1,1,:,1) = subsub_hydrobc(1,1,:)
-  hbc(2,1,:,1) = subsub_hydrobc(2,1,:)
-  hbc(1,2,:,1) = subsub_hydrobc(1,2,:)
-  hbc(2,2,:,1) = subsub_hydrobc(2,2,:)
-  hbc(1,3,:,1) = subsub_hydrobc(1,3,:)
-  hbc(2,3,:,1) = subsub_hydrobc(2,3,:)
-
-  !! Primitive
-  !(X-)
-  hbc(1,1,1,2) = hbc(1,1,1,1)
-  hbc(1,1,2,2) = hbc(1,1,2,1) / hbc(1,1,1,1)
-  hbc(1,1,3,2) = hbc(1,1,3,1) / hbc(1,1,1,1)
-  hbc(1,1,4,2) = hbc(1,1,4,1) / hbc(1,1,1,1)
-
-  ekin = 0.5D0 * hbc(1,1,1,1) * (hbc(1,1,2,2)**2 + hbc(1,1,3,2)**2 + hbc(1,1,4,2)**2)
-  hbc(1,1,5,2) = max((gamma - 1.0D0) * (hbc(1,1,5,1) - ekin),subsub_pfloor)
-
-  !(X+)  
-  hbc(2,1,1,2) = hbc(2,1,1,1)
-  hbc(2,1,2,2) = hbc(2,1,2,1) / hbc(2,1,1,1)
-  hbc(2,1,3,2) = hbc(2,1,3,1) / hbc(2,1,1,1)
-  hbc(2,1,4,2) = hbc(2,1,4,1) / hbc(2,1,1,1)
-
-  ekin = 0.5D0 * hbc(2,1,1,1) * (hbc(2,1,2,2)**2 + hbc(2,1,3,2)**2 + hbc(2,1,4,2)**2)
-  hbc(2,1,5,2) = max((gamma - 1.0D0) * (hbc(2,1,5,1) - ekin),subsub_pfloor)
-
-  !(Y-) 
-  hbc(1,2,1,2) = hbc(1,2,1,1)
-  hbc(1,2,2,2) = hbc(1,2,2,1) / hbc(1,2,1,1)
-  hbc(1,2,3,2) = hbc(1,2,3,1) / hbc(1,2,1,1)
-  hbc(1,2,4,2) = hbc(1,2,4,1) / hbc(1,2,1,1)
-
-  ekin = 0.5D0 * hbc(1,2,1,1) * (hbc(1,2,2,2)**2 + hbc(1,2,3,2)**2 + hbc(1,2,4,2)**2)
-  hbc(1,2,5,2) = max((gamma - 1.0D0) * (hbc(1,2,5,1) - ekin),subsub_pfloor)
-
-  !(Y+) 
-  hbc(2,2,1,2) = hbc(2,2,1,1)
-  hbc(2,2,2,2) = hbc(2,2,2,1) / hbc(2,2,1,1)
-  hbc(2,2,3,2) = hbc(2,2,3,1) / hbc(2,2,1,1)
-  hbc(2,2,4,2) = hbc(2,2,4,1) / hbc(2,2,1,1)
-
-  ekin = 0.5D0 * hbc(2,2,1,1) * (hbc(2,2,2,2)**2 + hbc(2,2,3,2)**2 + hbc(2,2,4,2)**2)
-  hbc(2,2,5,2) = max((gamma - 1.0D0) * (hbc(2,2,5,1) - ekin),subsub_pfloor)
-
-  !(Z-) 
-  hbc(1,3,1,2) = hbc(1,3,1,1)
-  hbc(1,3,2,2) = hbc(1,3,2,1) / hbc(1,3,1,1)
-  hbc(1,3,3,2) = hbc(1,3,3,1) / hbc(1,3,1,1)
-  hbc(1,3,4,2) = hbc(1,3,4,1) / hbc(1,3,1,1)
-
-  ekin = 0.5D0 * hbc(1,3,1,1) * (hbc(1,3,2,2)**2 + hbc(1,3,3,2)**2 + hbc(1,3,4,2)**2)
-  hbc(1,3,5,2) = max((gamma - 1.0D0) * (hbc(1,3,5,1) - ekin),subsub_pfloor)
-
-  !(Z+) 
-  hbc(2,3,1,2) = hbc(2,3,1,1)
-  hbc(2,3,2,2) = hbc(2,3,2,1) / hbc(2,3,1,1)
-  hbc(2,3,3,2) = hbc(2,3,3,1) / hbc(2,3,1,1)
-  hbc(2,3,4,2) = hbc(2,3,4,1) / hbc(2,3,1,1)
-
-  ekin = 0.5D0 * hbc(2,3,1,1) * (hbc(2,3,2,2)**2 + hbc(2,3,3,2)**2 + hbc(2,3,4,2)**2)
-  hbc(2,3,5,2) = max((gamma - 1.0D0) * (hbc(2,3,5,1) - ekin),subsub_pfloor)
+!  hbc(1,1,:,1) = subsub_hydrobc(1,1,:)
+!  hbc(2,1,:,1) = subsub_hydrobc(2,1,:)
+!  hbc(1,2,:,1) = subsub_hydrobc(1,2,:)
+!  hbc(2,2,:,1) = subsub_hydrobc(2,2,:)
+!  hbc(1,3,:,1) = subsub_hydrobc(1,3,:)
+!  hbc(2,3,:,1) = subsub_hydrobc(2,3,:)
+!
+!  !! Primitive
+!  !(X-)
+!  hbc(1,1,1,2) = hbc(1,1,1,1)
+!  hbc(1,1,2,2) = hbc(1,1,2,1) / hbc(1,1,1,1)
+!  hbc(1,1,3,2) = hbc(1,1,3,1) / hbc(1,1,1,1)
+!  hbc(1,1,4,2) = hbc(1,1,4,1) / hbc(1,1,1,1)
+!
+!  ekin = 0.5D0 * hbc(1,1,1,1) * (hbc(1,1,2,2)**2 + hbc(1,1,3,2)**2 + hbc(1,1,4,2)**2)
+!  hbc(1,1,5,2) = max((gamma - 1.0D0) * (hbc(1,1,5,1) - ekin),subsub_pfloor)
+!
+!  !(X+)  
+!  hbc(2,1,1,2) = hbc(2,1,1,1)
+!  hbc(2,1,2,2) = hbc(2,1,2,1) / hbc(2,1,1,1)
+!  hbc(2,1,3,2) = hbc(2,1,3,1) / hbc(2,1,1,1)
+!  hbc(2,1,4,2) = hbc(2,1,4,1) / hbc(2,1,1,1)
+!
+!  ekin = 0.5D0 * hbc(2,1,1,1) * (hbc(2,1,2,2)**2 + hbc(2,1,3,2)**2 + hbc(2,1,4,2)**2)
+!  hbc(2,1,5,2) = max((gamma - 1.0D0) * (hbc(2,1,5,1) - ekin),subsub_pfloor)
+!
+!  !(Y-) 
+!  hbc(1,2,1,2) = hbc(1,2,1,1)
+!  hbc(1,2,2,2) = hbc(1,2,2,1) / hbc(1,2,1,1)
+!  hbc(1,2,3,2) = hbc(1,2,3,1) / hbc(1,2,1,1)
+!  hbc(1,2,4,2) = hbc(1,2,4,1) / hbc(1,2,1,1)
+!
+!  ekin = 0.5D0 * hbc(1,2,1,1) * (hbc(1,2,2,2)**2 + hbc(1,2,3,2)**2 + hbc(1,2,4,2)**2)
+!  hbc(1,2,5,2) = max((gamma - 1.0D0) * (hbc(1,2,5,1) - ekin),subsub_pfloor)
+!
+!  !(Y+) 
+!  hbc(2,2,1,2) = hbc(2,2,1,1)
+!  hbc(2,2,2,2) = hbc(2,2,2,1) / hbc(2,2,1,1)
+!  hbc(2,2,3,2) = hbc(2,2,3,1) / hbc(2,2,1,1)
+!  hbc(2,2,4,2) = hbc(2,2,4,1) / hbc(2,2,1,1)
+!
+!  ekin = 0.5D0 * hbc(2,2,1,1) * (hbc(2,2,2,2)**2 + hbc(2,2,3,2)**2 + hbc(2,2,4,2)**2)
+!  hbc(2,2,5,2) = max((gamma - 1.0D0) * (hbc(2,2,5,1) - ekin),subsub_pfloor)
+!
+!  !(Z-) 
+!  hbc(1,3,1,2) = hbc(1,3,1,1)
+!  hbc(1,3,2,2) = hbc(1,3,2,1) / hbc(1,3,1,1)
+!  hbc(1,3,3,2) = hbc(1,3,3,1) / hbc(1,3,1,1)
+!  hbc(1,3,4,2) = hbc(1,3,4,1) / hbc(1,3,1,1)
+!
+!  ekin = 0.5D0 * hbc(1,3,1,1) * (hbc(1,3,2,2)**2 + hbc(1,3,3,2)**2 + hbc(1,3,4,2)**2)
+!  hbc(1,3,5,2) = max((gamma - 1.0D0) * (hbc(1,3,5,1) - ekin),subsub_pfloor)
+!
+!  !(Z+) 
+!  hbc(2,3,1,2) = hbc(2,3,1,1)
+!  hbc(2,3,2,2) = hbc(2,3,2,1) / hbc(2,3,1,1)
+!  hbc(2,3,3,2) = hbc(2,3,3,1) / hbc(2,3,1,1)
+!  hbc(2,3,4,2) = hbc(2,3,4,1) / hbc(2,3,1,1)
+!
+!  ekin = 0.5D0 * hbc(2,3,1,1) * (hbc(2,3,2,2)**2 + hbc(2,3,3,2)**2 + hbc(2,3,4,2)**2)
+!  hbc(2,3,5,2) = max((gamma - 1.0D0) * (hbc(2,3,5,1) - ekin),subsub_pfloor)
 
   !! DEBUG MODE FOR SELF-GRAVITY TEST
   !! )) DEBUGG GRAV((         <- this is for grep
   if(subsub_dev_gravonly .eq. 1)then
-    do i=1,2
-      do j=1,3
-        hbc(i,j,5,1) = 0.0D0
-        hbc(i,j,5,2) = 0.0D0
+    do ud=1,2
+      do idim=1,3
+        !$omp do collapse(2) private(i,j)
+        do i=1, subsub_ngrid
+          do j=1, subsub_ngrid
+            hbc(ud,idim,i,j,5,1) = 0.0D0
+            hbc(ud,idim,i,j,5,2) = 0.0D0
+          enddo
+        enddo
+        !$omp end do
       enddo
     enddo
   endif
 
 
   !! X_FX-
-  hbc(1,1,1,3) = hbc(1,1,2,1)
-  hbc(1,1,2,3) = hbc(1,1,2,1)*hbc(1,1,2,2) + hbc(1,1,5,2)
-  hbc(1,1,3,3) = hbc(1,1,3,1)*hbc(1,1,2,2)
-  hbc(1,1,4,3) = hbc(1,1,4,1)*hbc(1,1,2,2)
-  hbc(1,1,5,3) = (hbc(1,1,5,1) + hbc(1,1,5,2)) * hbc(1,1,2,2)
-
-  !! X_FX+
-  hbc(2,1,1,3) = hbc(2,1,2,1)
-  hbc(2,1,2,3) = hbc(2,1,2,1)*hbc(2,1,2,2) + hbc(2,1,5,2)
-  hbc(2,1,3,3) = hbc(2,1,3,1)*hbc(2,1,2,2)
-  hbc(2,1,4,3) = hbc(2,1,4,1)*hbc(2,1,2,2)
-  hbc(2,1,5,3) = (hbc(2,1,5,1) + hbc(2,1,5,2)) * hbc(2,1,2,2)
-
-  !! Y_FY-
-  hbc(1,2,1,4) = hbc(1,2,3,1)
-  hbc(1,2,2,4) = hbc(1,2,2,1)*hbc(1,2,3,2)
-  hbc(1,2,3,4) = hbc(1,2,3,1)*hbc(1,2,3,2) + hbc(1,2,5,2)
-  hbc(1,2,4,4) = hbc(1,2,4,1)*hbc(1,2,3,2)
-  hbc(1,2,5,4) = (hbc(1,2,5,1) + hbc(1,2,5,2)) * hbc(1,2,3,2)
-
-
-  !! Y_FY+
-  hbc(2,2,1,4) = hbc(2,2,3,1)
-  hbc(2,2,2,4) = hbc(2,2,2,1)*hbc(2,2,3,2)
-  hbc(2,2,3,4) = hbc(2,2,3,1)*hbc(2,2,3,2) + hbc(2,2,5,2)
-  hbc(2,2,4,4) = hbc(2,2,4,1)*hbc(2,2,3,2)
-  hbc(2,2,5,4) = (hbc(2,2,5,1) + hbc(2,2,5,2)) * hbc(2,2,3,2)
-
-
-  !! Z_FZ-
-  hbc(1,3,1,5) = hbc(1,3,4,1)
-  hbc(1,3,2,5) = hbc(1,3,2,1)*hbc(1,3,4,2)
-  hbc(1,3,3,5) = hbc(1,3,3,1)*hbc(1,3,4,2)
-  hbc(1,3,4,5) = hbc(1,3,4,1)*hbc(1,3,4,2) + hbc(1,3,5,2)
-  hbc(1,3,5,5) = (hbc(1,3,5,1) + hbc(1,3,5,2)) * hbc(1,3,4,2)
-
-  !! Z_FZ+
-  hbc(2,3,1,5) = hbc(2,3,4,1)
-  hbc(2,3,2,5) = hbc(2,3,2,1)*hbc(2,3,4,2)
-  hbc(2,3,3,5) = hbc(2,3,3,1)*hbc(2,3,4,2)
-  hbc(2,3,4,5) = hbc(2,3,4,1)*hbc(2,3,4,2) + hbc(2,3,5,2)
-  hbc(2,3,5,5) = (hbc(2,3,5,1) + hbc(2,3,5,2)) * hbc(2,3,4,2)
+!  hbc(1,1,1,3) = hbc(1,1,2,1)
+!  hbc(1,1,2,3) = hbc(1,1,2,1)*hbc(1,1,2,2) + hbc(1,1,5,2)
+!  hbc(1,1,3,3) = hbc(1,1,3,1)*hbc(1,1,2,2)
+!  hbc(1,1,4,3) = hbc(1,1,4,1)*hbc(1,1,2,2)
+!  hbc(1,1,5,3) = (hbc(1,1,5,1) + hbc(1,1,5,2)) * hbc(1,1,2,2)
+!
+!  !! X_FX+
+!  hbc(2,1,1,3) = hbc(2,1,2,1)
+!  hbc(2,1,2,3) = hbc(2,1,2,1)*hbc(2,1,2,2) + hbc(2,1,5,2)
+!  hbc(2,1,3,3) = hbc(2,1,3,1)*hbc(2,1,2,2)
+!  hbc(2,1,4,3) = hbc(2,1,4,1)*hbc(2,1,2,2)
+!  hbc(2,1,5,3) = (hbc(2,1,5,1) + hbc(2,1,5,2)) * hbc(2,1,2,2)
+!
+!  !! Y_FY-
+!  hbc(1,2,1,4) = hbc(1,2,3,1)
+!  hbc(1,2,2,4) = hbc(1,2,2,1)*hbc(1,2,3,2)
+!  hbc(1,2,3,4) = hbc(1,2,3,1)*hbc(1,2,3,2) + hbc(1,2,5,2)
+!  hbc(1,2,4,4) = hbc(1,2,4,1)*hbc(1,2,3,2)
+!  hbc(1,2,5,4) = (hbc(1,2,5,1) + hbc(1,2,5,2)) * hbc(1,2,3,2)
+!
+!
+!  !! Y_FY+
+!  hbc(2,2,1,4) = hbc(2,2,3,1)
+!  hbc(2,2,2,4) = hbc(2,2,2,1)*hbc(2,2,3,2)
+!  hbc(2,2,3,4) = hbc(2,2,3,1)*hbc(2,2,3,2) + hbc(2,2,5,2)
+!  hbc(2,2,4,4) = hbc(2,2,4,1)*hbc(2,2,3,2)
+!  hbc(2,2,5,4) = (hbc(2,2,5,1) + hbc(2,2,5,2)) * hbc(2,2,3,2)
+!
+!
+!  !! Z_FZ-
+!  hbc(1,3,1,5) = hbc(1,3,4,1)
+!  hbc(1,3,2,5) = hbc(1,3,2,1)*hbc(1,3,4,2)
+!  hbc(1,3,3,5) = hbc(1,3,3,1)*hbc(1,3,4,2)
+!  hbc(1,3,4,5) = hbc(1,3,4,1)*hbc(1,3,4,2) + hbc(1,3,5,2)
+!  hbc(1,3,5,5) = (hbc(1,3,5,1) + hbc(1,3,5,2)) * hbc(1,3,4,2)
+!
+!  !! Z_FZ+
+!  hbc(2,3,1,5) = hbc(2,3,4,1)
+!  hbc(2,3,2,5) = hbc(2,3,2,1)*hbc(2,3,4,2)
+!  hbc(2,3,3,5) = hbc(2,3,3,1)*hbc(2,3,4,2)
+!  hbc(2,3,4,5) = hbc(2,3,4,1)*hbc(2,3,4,2) + hbc(2,3,5,2)
+!  hbc(2,3,5,5) = (hbc(2,3,5,1) + hbc(2,3,5,2)) * hbc(2,3,4,2)
 
 
   
@@ -1427,28 +1547,51 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
     enddo
     enddo
     enddo
+    !$omp end do
   endif
 
 
-
-  do i=1, 2
-    do j=1, ndim
-      if(hbc(i,j,1,2) .gt. subsub_dfloor) then
-        csarr_bc(i,j) = sqrt(gamma * hbc(i,j,5,2) / hbc(i,j,1,2))
-      else
-        csarr_bc(i,j) = sqrt(gamma * subsub_pfloor / subsub_dfloor)
-      endif
+  !$omp do private(ud, idim) collapse(2)
+  do i=1, subsub_ngrid
+    do j=1, subsub_ngrid
+      do ud=1,2
+        do idim=1, ndim
+          if(hbc(ud,idim,i,j,1,1) .gt. subsub_dfloor) then
+            csarr_bc(ud,idim,i,j) = sqrt(gamma * hbc(ud,idim,i,j,5,2) / hbc(ud,idim,i,j,1,2))
+          else
+            csarr_bc(ud,idim,i,j) = sqrt(gamma * subsub_pfloor / subsub_dfloor)
+          endif
+        enddo
+      enddo
     enddo
   enddo
+  !$omp end do
+
+!  do i=1, 2
+!    do j=1, ndim
+!      
+!      if(hbc(i,j,1,2) .gt. subsub_dfloor) then
+!        csarr_bc(i,j) = sqrt(gamma * hbc(i,j,5,2) / hbc(i,j,1,2))
+!      else
+!        csarr_bc(i,j) = sqrt(gamma * subsub_pfloor / subsub_dfloor)
+!      endif
+!    enddo
+!  enddo
 
   !! DEBUG MODE FOR SELF-GRAVITY TEST
   !! )) DEBUGG GRAV((         <- this is for grep
   if(subsub_dev_gravonly .eq. 1)then
-    do i=1,2
-    do j=1, ndim
-      csarr_bc(i,j) = 0.0D0
+    !$omp do collapse(2) private(ud,idim,i,j)
+    do i=1,subsub_ngrid
+      do j=1, subsub_ngrid
+        do ud=1,2
+          do idim=1,ndim
+            csarr_bc(ud,idim,i,j) = 0.0D0
+          enddo
+        enddo
+      enddo
     enddo
-    enddo
+    !$omp end do
   endif
 
   !!----- Compute Flux
@@ -1497,10 +1640,10 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       ixu = 1+1
       ixd = 1-1
 
-      bc_vv = hbc(1,1,2,2)
-      bc_cs  = csarr_bc(1,1)
-      bc_flux(:) = hbc(1,1,:,3)
-      bc_cons(:) = hbc(1,1,:,1)
+      bc_vv = hbc(1,1,iy,iz,2,2)
+      bc_cs  = csarr_bc(1,1,iy,iz)
+      bc_flux(:) = hbc(1,1,iy,iz,:,3)
+      bc_cons(:) = hbc(1,1,iy,iz,:,1)
 
       !! DEBUG MODE FOR SELF-GRAVITY TEST
       !! )) DEBUGG HYDRO ((         <- this is for grep
@@ -1648,10 +1791,10 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       ixu = subsub_ngrid+1
       ixd = subsub_ngrid-1
 
-      bc_vv = hbc(2,1,2,2)
-      bc_cs  = csarr_bc(2,1)
-      bc_flux(:) = hbc(2,1,:,3)
-      bc_cons(:) = hbc(2,1,:,1)
+      bc_vv = hbc(2,1,iy,iz,2,2)
+      bc_cs  = csarr_bc(2,1,iy,iz)
+      bc_flux(:) = hbc(2,1,iy,iz,:,3)
+      bc_cons(:) = hbc(2,1,iy,iz,:,1)
 
       !! DEBUG MODE FOR SELF-GRAVITY TEST
       !! )) DEBUGG HYDRO ((         <- this is for grep
@@ -1733,10 +1876,10 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       iyu = 1+1
       iyd = 1-1
 
-      bc_vv = hbc(1,2,3,2)
-      bc_cs  = csarr_bc(1,2)
-      bc_flux(:) = hbc(1,2,:,4)
-      bc_cons(:) = hbc(1,2,:,1)
+      bc_vv = hbc(1,2,ix,iz,3,2)
+      bc_cs  = csarr_bc(1,2,ix,iz)
+      bc_flux(:) = hbc(1,2,ix,iz,:,4)
+      bc_cons(:) = hbc(1,2,ix,iz,:,1)
 
       !! DEBUG MODE FOR SELF-GRAVITY TEST
       !! )) DEBUGG HYDRO ((         <- this is for grep
@@ -1886,10 +2029,10 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       iyu = subsub_ngrid+1
       iyd = subsub_ngrid-1
 
-      bc_vv = hbc(2,2,3,2)
-      bc_cs  = csarr_bc(2,2)
-      bc_flux(:) = hbc(2,2,:,4)
-      bc_cons(:) = hbc(2,2,:,1)
+      bc_vv = hbc(2,2,ix,iz,3,2)
+      bc_cs  = csarr_bc(2,2,ix,iz)
+      bc_flux(:) = hbc(2,2,ix,iz,:,4)
+      bc_cons(:) = hbc(2,2,ix,iz,:,1)
 
       !! DEBUG MODE FOR SELF-GRAVITY TEST
       !! )) DEBUGG HYDRO ((         <- this is for grep
@@ -1971,10 +2114,10 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       izu = 1+1
       izd = 1-1
 
-      bc_vv = hbc(1,3,4,2)
-      bc_cs  = csarr_bc(1,3)
-      bc_flux(:) = hbc(1,3,:,5)
-      bc_cons(:) = hbc(1,3,:,1)
+      bc_vv = hbc(1,3,ix,iy,4,2)
+      bc_cs  = csarr_bc(1,3,ix,iy)
+      bc_flux(:) = hbc(1,3,ix,iy,:,5)
+      bc_cons(:) = hbc(1,3,ix,iy,:,1)
 
       !! DEBUG MODE FOR SELF-GRAVITY TEST
       !! )) DEBUGG HYDRO ((         <- this is for grep
@@ -2119,10 +2262,10 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
       izu = subsub_ngrid+1
       izd = subsub_ngrid-1
 
-      bc_vv = hbc(2,3,4,2)
-      bc_cs  = csarr_bc(2,3)
-      bc_flux(:) = hbc(2,3,:,5)
-      bc_cons(:) = hbc(2,3,:,1)
+      bc_vv = hbc(2,3,ix,iy,4,2)
+      bc_cs  = csarr_bc(2,3,ix,iy)
+      bc_flux(:) = hbc(2,3,ix,iy,:,5)
+      bc_cons(:) = hbc(2,3,ix,iy,:,1)
 
       !! DEBUG MODE FOR SELF-GRAVITY TEST
       !! )) DEBUGG HYDRO ((         <- this is for grep
@@ -2203,256 +2346,256 @@ subroutine subsub_hydroRiemann_Rusanov(dt)!, hbc)
 !! X-axis
 !!------------------------------------------------------
   !! (left boundary)
-  !$omp do collapse(2) private(ii, xu, ivar, iy, iz, amaxL, amaxR, FL, FR, Utmp)
-  do iy=1, subsub_ngrid
-  do iz=1, subsub_ngrid
-    ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + 1
-    xu = ii + 1
-
-    amaxL = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(hbc(1,1,2,2)) + csarr_bc(1,1))
-    amaxR = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(2,iy,iz,2,2)) + subsub_csarr(2,iy,iz))
-
-    do ivar=1,subsub_nhydro
-      FL(ivar) = 0.5D0*(hbc(1,1,ivar,3) + subsub_hdummy(1,iy,iz,ivar,3)) - &
-        0.5D0*amaxL*(subsub_hdummy(1,iy,iz,ivar,1) - hbc(1,1,ivar,1))
-      FR(ivar) = 0.5D0*(subsub_hdummy(1,iy,iz,ivar,3) + subsub_hdummy(2,iy,iz,ivar,3)) - &
-        0.5D0*amaxR*(subsub_hdummy(2,iy,iz,ivar,1) - subsub_hdummy(1,iy,iz,ivar,1))
-    enddo
-
-    
-    do ivar=1,subsub_nhydro
-      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-      subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
-    enddo
-  enddo
-  enddo
-  !$omp end do
- 
-  !! (interior) 
-  do ix=3, subsub_ngrid-1, 2
-    !$omp do collapse(2) private(ii, xu, xd, ivar, iy, iz, amaxL, amaxR, FL, FR)
-    do iy=1, subsub_ngrid
-    do iz=1, subsub_ngrid
-      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
-      xu = ii + 1
-      xd = ii - 1
-
-      amaxL = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix-1,iy,iz,2,2)) + subsub_csarr(ix-1,iy,iz))
-      amaxR = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix+1,iy,iz,2,2)) + subsub_csarr(ix+1,iy,iz))
-
-      do ivar=1,subsub_nhydro
-        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ix-1,iy,iz,ivar,3)) - &
-          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix-1,iy,iz,ivar,1))
-        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ix+1,iy,iz,ivar,3)) - &
-          0.5D0*amaxR*(subsub_hdummy(ix+1,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
-      enddo
-
-      do ivar=1,subsub_nhydro
-        subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam * FL(ivar)
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-        subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
-      enddo
-    enddo
-    enddo
-    !$omp end do
-  enddo
-
-  !! (right boundary)
-  !$omp do collapse(2) private(ii, xd, ivar, iy, iz, amaxL, amaxR, FL, FR)
-  do iy=1, subsub_ngrid
-  do iz=1, subsub_ngrid
-    ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + subsub_ngrid
-    xd = ii - 1
-
-    amaxL = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(subsub_hdummy(subsub_ngrid-1,iy,iz,2,2)) + subsub_csarr(subsub_ngrid-1,iy,iz))
-    amaxR = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(hbc(2,1,2,2)) + csarr_bc(2,1))
-
-    do ivar=1, 5
-      FL(ivar) = 0.5D0*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,3) + subsub_hdummy(subsub_ngrid-1,iy,iz,ivar,3)) - &
-        0.5D0*amaxL*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,1) - subsub_hdummy(subsub_ngrid-1,iy,iz,ivar,1))
-      FR(ivar) = 0.5D0*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,3) + hbc(2,1,ivar,3)) - &
-        0.5D0*amaxR*(hbc(2,1,ivar,1) - subsub_hdummy(subsub_ngrid,iy,iz,ivar,1))
-    enddo
-
-    do ivar=1, 5
-      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-      if(isodd)then
-        subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam*FL(ivar)
-      endif
-    enddo
-  enddo
-  enddo
-  !$omp end do
-
-!!------------------------------------------------------
-!! Y-axis
-!!------------------------------------------------------
-  !! (left boundary)
-  !$omp do collapse(2) private(ii, yu, ivar, ix, iz, amaxL, amaxR, FL, FR)
-  do ix=1, subsub_ngrid
-  do iz=1, subsub_ngrid
-    ii = (iz-1)*subsub_ngrid2 + ix
-    yu = ii + subsub_ngrid
-
-    amaxL = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(hbc(1,2,3,2)) + csarr_bc(1,2))
-    amaxR = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,2,iz,3,2)) + subsub_csarr(ix,2,iz))
-
-    do ivar=1,subsub_nhydro
-      FL(ivar) = 0.5D0*(hbc(1,2,ivar,4) + subsub_hdummy(ix,1,iz,ivar,4)) - &
-        0.5D0*amaxL*(subsub_hdummy(ix,1,iz,ivar,1) - hbc(1,2,ivar,1))
-      FR(ivar) = 0.5D0*(subsub_hdummy(ix,1,iz,ivar,4) + subsub_hdummy(ix,2,iz,ivar,4)) - &
-        0.5D0*amaxR*(subsub_hdummy(ix,2,iz,ivar,1) - subsub_hdummy(ix,1,iz,ivar,1))
-    enddo
-
-    
-    do ivar=1,subsub_nhydro
-      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-      subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
-    enddo
-  enddo
-  enddo
-  !$omp end do
- 
-  !! (interior) 
-  do iy=3, subsub_ngrid-1, 2
-    !$omp do collapse(2) private(ii, yu, yd, ix, iz, ivar, amaxL, amaxR, FL, FR)
-    do iz=1, subsub_ngrid
-    do ix=1, subsub_ngrid
-      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
-      yu = ii + subsub_ngrid
-      yd = ii - subsub_ngrid
-
-      amaxL = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy-1,iz,3,2)) + subsub_csarr(ix,iy-1,iz))
-      amaxR = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy+1,iz,3,2)) + subsub_csarr(ix,iy+1,iz))
-
-      do ivar=1,subsub_nhydro
-        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iy-1,iz,ivar,4)) - &
-          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy-1,iz,ivar,1))
-        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iy+1,iz,ivar,4)) - &
-          0.5D0*amaxR*(subsub_hdummy(ix,iy+1,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
-      enddo
-
-      do ivar=1,subsub_nhydro
-        subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam * FL(ivar)
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-        subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
-      enddo
-    enddo
-    enddo
-    !$omp end do
-  enddo
-
-  !! (right boundary)
-  !$omp do collapse(2) private(ii, yd, ivar, ix, iz, amaxL, amaxR, FL, FR)
-  do iz=1, subsub_ngrid
-  do ix=1, subsub_ngrid
-    ii = (iz-1)*subsub_ngrid2 + (subsub_ngrid-1)*subsub_ngrid + ix
-    yd = ii - subsub_ngrid
-
-    amaxL = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(subsub_hdummy(ix,subsub_ngrid-1,iz,3,2)) + subsub_csarr(ix,subsub_ngrid-1,iz))
-    amaxR = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(hbc(2,2,3,2)) + csarr_bc(2,2))
-
-    do ivar=1, 5
-      FL(ivar) = 0.5D0*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,4) + subsub_hdummy(ix,subsub_ngrid-1,iz,ivar,4)) - &
-        0.5D0*amaxL*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,1) - subsub_hdummy(ix,subsub_ngrid-1,iz,ivar,1))
-      FR(ivar) = 0.5D0*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,4) + hbc(2,2,ivar,4)) - &
-        0.5D0*amaxR*(hbc(2,2,ivar,1) - subsub_hdummy(ix,subsub_ngrid,iz,ivar,1))
-    enddo
-
-    do ivar=1, 5
-      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-      if(isodd)then
-        subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam*FL(ivar)
-      endif
-    enddo
-  enddo
-  enddo
-  !$omp end do
-
-!!------------------------------------------------------
-!! Z-axis
-!!------------------------------------------------------
-  !! (left boundary)
-  !$omp do collapse(2) private(ii, zu, ivar, ix, iy, amaxL, amaxR, FL, FR)
-  do iy=1, subsub_ngrid
-  do ix=1, subsub_ngrid
-    ii = (iy-1)*subsub_ngrid + ix
-    zu = ii + subsub_ngrid2
-
-    amaxL = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(hbc(1,3,4,2)) + csarr_bc(1,3))
-    amaxR = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,2,4,2)) + subsub_csarr(ix,iy,2))
-
-    do ivar=1,subsub_nhydro
-      FL(ivar) = 0.5D0*(hbc(1,3,ivar,5) + subsub_hdummy(ix,iy,1,ivar,5)) - &
-        0.5D0*amaxL*(subsub_hdummy(ix,iy,1,ivar,1) - hbc(1,3,ivar,1))
-      FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,1,ivar,5) + subsub_hdummy(ix,iy,2,ivar,5)) - &
-        0.5D0*amaxR*(subsub_hdummy(ix,iy,2,ivar,1) - subsub_hdummy(ix,iy,1,ivar,1))
-    enddo
-
-    
-    do ivar=1,subsub_nhydro
-      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-      subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)
-    enddo
-  enddo
-  enddo
-  !$omp end do
- 
-  !! (interior) 
-  do iz=3, subsub_ngrid-1, 2
-    !$omp do collapse(2) private(ii, zu, zd, ivar, ix, iy, amaxL, amaxR, FL, FR)
-    do iy=1, subsub_ngrid
-    do ix=1, subsub_ngrid
-      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
-      zu = ii + subsub_ngrid2
-      zd = ii - subsub_ngrid2
-
-      amaxL = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,iz-1,4,2)) + subsub_csarr(ix,iy,iz-1))
-      amaxR = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,iz+1,4,2)) + subsub_csarr(ix,iy,iz+1))
-
-      do ivar=1,subsub_nhydro
-        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,iz-1,ivar,5)) - &
-          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz-1,ivar,1))
-        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,iz+1,ivar,5)) - &
-          0.5D0*amaxR*(subsub_hdummy(ix,iy,iz+1,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
-      enddo
-
-      do ivar=1,subsub_nhydro
-        subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam * FL(ivar)
-        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-        subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)
-      enddo
-    enddo
-    enddo
-    !$omp end do
-  enddo
-
-  !! (right boundary)
-  !$omp do collapse(2) private(ii, zd, ivar, ix, iy, amaxL, amaxR, FL, FR)
-  do iy=1, subsub_ngrid
-  do ix=1, subsub_ngrid
-    ii = (subsub_ngrid-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
-    zd = ii - subsub_ngrid2
-
-    amaxL = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(subsub_hdummy(ix,iy,subsub_ngrid-1,4,2)) + subsub_csarr(ix,iy,subsub_ngrid-1))
-    amaxR = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(hbc(2,3,4,2)) + csarr_bc(2,3))
-
-    do ivar=1, 5
-      FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,5) + subsub_hdummy(ix,iy,subsub_ngrid-1,ivar,5)) - &
-        0.5D0*amaxL*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,1) - subsub_hdummy(ix,iy,subsub_ngrid-1,ivar,1))
-      FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,5) + hbc(2,3,ivar,5)) - &
-        0.5D0*amaxR*(hbc(2,3,ivar,1) - subsub_hdummy(ix,iy,subsub_ngrid,ivar,1))
-    enddo
-
-    do ivar=1, 5
-      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
-      if(isodd)then
-        subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam*FL(ivar)
-      endif
-    enddo
-  enddo
-  enddo
-  !$omp end do
+!  !$omp do collapse(2) private(ii, xu, ivar, iy, iz, amaxL, amaxR, FL, FR, Utmp)
+!  do iy=1, subsub_ngrid
+!  do iz=1, subsub_ngrid
+!    ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + 1
+!    xu = ii + 1
+!
+!    amaxL = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(hbc(1,1,2,2)) + csarr_bc(1,1))
+!    amaxR = max(abs(subsub_hdummy(1,iy,iz,2,2)) + subsub_csarr(1,iy,iz), abs(subsub_hdummy(2,iy,iz,2,2)) + subsub_csarr(2,iy,iz))
+!
+!    do ivar=1,subsub_nhydro
+!      FL(ivar) = 0.5D0*(hbc(1,1,ivar,3) + subsub_hdummy(1,iy,iz,ivar,3)) - &
+!        0.5D0*amaxL*(subsub_hdummy(1,iy,iz,ivar,1) - hbc(1,1,ivar,1))
+!      FR(ivar) = 0.5D0*(subsub_hdummy(1,iy,iz,ivar,3) + subsub_hdummy(2,iy,iz,ivar,3)) - &
+!        0.5D0*amaxR*(subsub_hdummy(2,iy,iz,ivar,1) - subsub_hdummy(1,iy,iz,ivar,1))
+!    enddo
+!
+!    
+!    do ivar=1,subsub_nhydro
+!      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!      subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
+!    enddo
+!  enddo
+!  enddo
+!  !$omp end do
+! 
+!  !! (interior) 
+!  do ix=3, subsub_ngrid-1, 2
+!    !$omp do collapse(2) private(ii, xu, xd, ivar, iy, iz, amaxL, amaxR, FL, FR)
+!    do iy=1, subsub_ngrid
+!    do iz=1, subsub_ngrid
+!      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+!      xu = ii + 1
+!      xd = ii - 1
+!
+!      amaxL = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix-1,iy,iz,2,2)) + subsub_csarr(ix-1,iy,iz))
+!      amaxR = max(abs(subsub_hdummy(ix,iy,iz,2,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix+1,iy,iz,2,2)) + subsub_csarr(ix+1,iy,iz))
+!
+!      do ivar=1,subsub_nhydro
+!        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ix-1,iy,iz,ivar,3)) - &
+!          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix-1,iy,iz,ivar,1))
+!        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,3) + subsub_hdummy(ix+1,iy,iz,ivar,3)) - &
+!          0.5D0*amaxR*(subsub_hdummy(ix+1,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+!      enddo
+!
+!      do ivar=1,subsub_nhydro
+!        subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam * FL(ivar)
+!        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!        subsub_hydro(xu,ivar) = subsub_hydro(xu,ivar) + lam * FR(ivar)
+!      enddo
+!    enddo
+!    enddo
+!    !$omp end do
+!  enddo
+!
+!  !! (right boundary)
+!  !$omp do collapse(2) private(ii, xd, ivar, iy, iz, amaxL, amaxR, FL, FR)
+!  do iy=1, subsub_ngrid
+!  do iz=1, subsub_ngrid
+!    ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + subsub_ngrid
+!    xd = ii - 1
+!
+!    amaxL = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(subsub_hdummy(subsub_ngrid-1,iy,iz,2,2)) + subsub_csarr(subsub_ngrid-1,iy,iz))
+!    amaxR = max(abs(subsub_hdummy(subsub_ngrid,iy,iz,2,2)) + subsub_csarr(subsub_ngrid,iy,iz), abs(hbc(2,1,2,2)) + csarr_bc(2,1))
+!
+!    do ivar=1, 5
+!      FL(ivar) = 0.5D0*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,3) + subsub_hdummy(subsub_ngrid-1,iy,iz,ivar,3)) - &
+!        0.5D0*amaxL*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,1) - subsub_hdummy(subsub_ngrid-1,iy,iz,ivar,1))
+!      FR(ivar) = 0.5D0*(subsub_hdummy(subsub_ngrid,iy,iz,ivar,3) + hbc(2,1,ivar,3)) - &
+!        0.5D0*amaxR*(hbc(2,1,ivar,1) - subsub_hdummy(subsub_ngrid,iy,iz,ivar,1))
+!    enddo
+!
+!    do ivar=1, 5
+!      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!      if(isodd)then
+!        subsub_hydro(xd,ivar) = subsub_hydro(xd,ivar) - lam*FL(ivar)
+!      endif
+!    enddo
+!  enddo
+!  enddo
+!  !$omp end do
+!
+!!!------------------------------------------------------
+!!! Y-axis
+!!!------------------------------------------------------
+!  !! (left boundary)
+!  !$omp do collapse(2) private(ii, yu, ivar, ix, iz, amaxL, amaxR, FL, FR)
+!  do ix=1, subsub_ngrid
+!  do iz=1, subsub_ngrid
+!    ii = (iz-1)*subsub_ngrid2 + ix
+!    yu = ii + subsub_ngrid
+!
+!    amaxL = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(hbc(1,2,3,2)) + csarr_bc(1,2))
+!    amaxR = max(abs(subsub_hdummy(ix,1,iz,3,2)) + subsub_csarr(ix,1,iz), abs(subsub_hdummy(ix,2,iz,3,2)) + subsub_csarr(ix,2,iz))
+!
+!    do ivar=1,subsub_nhydro
+!      FL(ivar) = 0.5D0*(hbc(1,2,ivar,4) + subsub_hdummy(ix,1,iz,ivar,4)) - &
+!        0.5D0*amaxL*(subsub_hdummy(ix,1,iz,ivar,1) - hbc(1,2,ivar,1))
+!      FR(ivar) = 0.5D0*(subsub_hdummy(ix,1,iz,ivar,4) + subsub_hdummy(ix,2,iz,ivar,4)) - &
+!        0.5D0*amaxR*(subsub_hdummy(ix,2,iz,ivar,1) - subsub_hdummy(ix,1,iz,ivar,1))
+!    enddo
+!
+!    
+!    do ivar=1,subsub_nhydro
+!      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!      subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
+!    enddo
+!  enddo
+!  enddo
+!  !$omp end do
+! 
+!  !! (interior) 
+!  do iy=3, subsub_ngrid-1, 2
+!    !$omp do collapse(2) private(ii, yu, yd, ix, iz, ivar, amaxL, amaxR, FL, FR)
+!    do iz=1, subsub_ngrid
+!    do ix=1, subsub_ngrid
+!      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+!      yu = ii + subsub_ngrid
+!      yd = ii - subsub_ngrid
+!
+!      amaxL = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy-1,iz,3,2)) + subsub_csarr(ix,iy-1,iz))
+!      amaxR = max(abs(subsub_hdummy(ix,iy,iz,3,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy+1,iz,3,2)) + subsub_csarr(ix,iy+1,iz))
+!
+!      do ivar=1,subsub_nhydro
+!        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iy-1,iz,ivar,4)) - &
+!          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy-1,iz,ivar,1))
+!        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,4) + subsub_hdummy(ix,iy+1,iz,ivar,4)) - &
+!          0.5D0*amaxR*(subsub_hdummy(ix,iy+1,iz,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+!      enddo
+!
+!      do ivar=1,subsub_nhydro
+!        subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam * FL(ivar)
+!        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!        subsub_hydro(yu,ivar) = subsub_hydro(yu,ivar) + lam * FR(ivar)
+!      enddo
+!    enddo
+!    enddo
+!    !$omp end do
+!  enddo
+!
+!  !! (right boundary)
+!  !$omp do collapse(2) private(ii, yd, ivar, ix, iz, amaxL, amaxR, FL, FR)
+!  do iz=1, subsub_ngrid
+!  do ix=1, subsub_ngrid
+!    ii = (iz-1)*subsub_ngrid2 + (subsub_ngrid-1)*subsub_ngrid + ix
+!    yd = ii - subsub_ngrid
+!
+!    amaxL = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(subsub_hdummy(ix,subsub_ngrid-1,iz,3,2)) + subsub_csarr(ix,subsub_ngrid-1,iz))
+!    amaxR = max(abs(subsub_hdummy(ix,subsub_ngrid,iz,3,2)) + subsub_csarr(ix,subsub_ngrid,iz), abs(hbc(2,2,3,2)) + csarr_bc(2,2))
+!
+!    do ivar=1, 5
+!      FL(ivar) = 0.5D0*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,4) + subsub_hdummy(ix,subsub_ngrid-1,iz,ivar,4)) - &
+!        0.5D0*amaxL*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,1) - subsub_hdummy(ix,subsub_ngrid-1,iz,ivar,1))
+!      FR(ivar) = 0.5D0*(subsub_hdummy(ix,subsub_ngrid,iz,ivar,4) + hbc(2,2,ivar,4)) - &
+!        0.5D0*amaxR*(hbc(2,2,ivar,1) - subsub_hdummy(ix,subsub_ngrid,iz,ivar,1))
+!    enddo
+!
+!    do ivar=1, 5
+!      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!      if(isodd)then
+!        subsub_hydro(yd,ivar) = subsub_hydro(yd,ivar) - lam*FL(ivar)
+!      endif
+!    enddo
+!  enddo
+!  enddo
+!  !$omp end do
+!
+!!!------------------------------------------------------
+!!! Z-axis
+!!!------------------------------------------------------
+!  !! (left boundary)
+!  !$omp do collapse(2) private(ii, zu, ivar, ix, iy, amaxL, amaxR, FL, FR)
+!  do iy=1, subsub_ngrid
+!  do ix=1, subsub_ngrid
+!    ii = (iy-1)*subsub_ngrid + ix
+!    zu = ii + subsub_ngrid2
+!
+!    amaxL = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(hbc(1,3,4,2)) + csarr_bc(1,3))
+!    amaxR = max(abs(subsub_hdummy(ix,iy,1,4,2)) + subsub_csarr(ix,iy,1), abs(subsub_hdummy(ix,iy,2,4,2)) + subsub_csarr(ix,iy,2))
+!
+!    do ivar=1,subsub_nhydro
+!      FL(ivar) = 0.5D0*(hbc(1,3,ivar,5) + subsub_hdummy(ix,iy,1,ivar,5)) - &
+!        0.5D0*amaxL*(subsub_hdummy(ix,iy,1,ivar,1) - hbc(1,3,ivar,1))
+!      FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,1,ivar,5) + subsub_hdummy(ix,iy,2,ivar,5)) - &
+!        0.5D0*amaxR*(subsub_hdummy(ix,iy,2,ivar,1) - subsub_hdummy(ix,iy,1,ivar,1))
+!    enddo
+!
+!    
+!    do ivar=1,subsub_nhydro
+!      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!      subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)
+!    enddo
+!  enddo
+!  enddo
+!  !$omp end do
+! 
+!  !! (interior) 
+!  do iz=3, subsub_ngrid-1, 2
+!    !$omp do collapse(2) private(ii, zu, zd, ivar, ix, iy, amaxL, amaxR, FL, FR)
+!    do iy=1, subsub_ngrid
+!    do ix=1, subsub_ngrid
+!      ii = (iz-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+!      zu = ii + subsub_ngrid2
+!      zd = ii - subsub_ngrid2
+!
+!      amaxL = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,iz-1,4,2)) + subsub_csarr(ix,iy,iz-1))
+!      amaxR = max(abs(subsub_hdummy(ix,iy,iz,4,2)) + subsub_csarr(ix,iy,iz), abs(subsub_hdummy(ix,iy,iz+1,4,2)) + subsub_csarr(ix,iy,iz+1))
+!
+!      do ivar=1,subsub_nhydro
+!        FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,iz-1,ivar,5)) - &
+!          0.5D0*amaxL*(subsub_hdummy(ix,iy,iz,ivar,1) - subsub_hdummy(ix,iy,iz-1,ivar,1))
+!        FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,iz,ivar,5) + subsub_hdummy(ix,iy,iz+1,ivar,5)) - &
+!          0.5D0*amaxR*(subsub_hdummy(ix,iy,iz+1,ivar,1) - subsub_hdummy(ix,iy,iz,ivar,1))
+!      enddo
+!
+!      do ivar=1,subsub_nhydro
+!        subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam * FL(ivar)
+!        subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!        subsub_hydro(zu,ivar) = subsub_hydro(zu,ivar) + lam * FR(ivar)
+!      enddo
+!    enddo
+!    enddo
+!    !$omp end do
+!  enddo
+!
+!  !! (right boundary)
+!  !$omp do collapse(2) private(ii, zd, ivar, ix, iy, amaxL, amaxR, FL, FR)
+!  do iy=1, subsub_ngrid
+!  do ix=1, subsub_ngrid
+!    ii = (subsub_ngrid-1)*subsub_ngrid2 + (iy-1)*subsub_ngrid + ix
+!    zd = ii - subsub_ngrid2
+!
+!    amaxL = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(subsub_hdummy(ix,iy,subsub_ngrid-1,4,2)) + subsub_csarr(ix,iy,subsub_ngrid-1))
+!    amaxR = max(abs(subsub_hdummy(ix,iy,subsub_ngrid,4,2)) + subsub_csarr(ix,iy,subsub_ngrid), abs(hbc(2,3,4,2)) + csarr_bc(2,3))
+!
+!    do ivar=1, 5
+!      FL(ivar) = 0.5D0*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,5) + subsub_hdummy(ix,iy,subsub_ngrid-1,ivar,5)) - &
+!        0.5D0*amaxL*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,1) - subsub_hdummy(ix,iy,subsub_ngrid-1,ivar,1))
+!      FR(ivar) = 0.5D0*(subsub_hdummy(ix,iy,subsub_ngrid,ivar,5) + hbc(2,3,ivar,5)) - &
+!        0.5D0*amaxR*(hbc(2,3,ivar,1) - subsub_hdummy(ix,iy,subsub_ngrid,ivar,1))
+!    enddo
+!
+!    do ivar=1, 5
+!      subsub_hydro(ii,ivar) = subsub_hydro(ii,ivar) - lam * (FR(ivar) - FL(ivar))
+!      if(isodd)then
+!        subsub_hydro(zd,ivar) = subsub_hydro(zd,ivar) - lam*FL(ivar)
+!      endif
+!    enddo
+!  enddo
+!  enddo
+!  !$omp end do
 end subroutine
 !################################################################
 !################################################################

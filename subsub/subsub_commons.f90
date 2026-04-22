@@ -18,7 +18,12 @@ module subsub_commons
      real(dp), dimension(:,:), allocatable :: hydro !! nlevel^3 X subsub_nhydro
      
      real(dp), dimension(:), allocatable :: phi !! ngird^3
+     real(dp), dimension(:), allocatable :: phi_bh !! ngird^3
 
+     real(dp), dimension(:,:), allocatable :: edgeBC
+     real(dp), dimension(:,:,:,:,:), allocatable :: faceBC
+
+     logical :: new
      !! Not used at the moment
      !real(dp), dimension(:,:), allocatable :: fg !! ngrid^3 X ndim
   end type subsub_type
@@ -35,7 +40,7 @@ module subsub_commons
 
   integer :: subsub_ngrid2
 
-  real(dp), dimension(:), allocatable :: subsub_phi
+  real(dp), dimension(:), allocatable :: subsub_phi, subsub_phibh
   real(dp), dimension(:,:), allocatable :: subsub_fg
   real(dp), dimension(:), allocatable :: subsub_dd
   integer, dimension(:), allocatable :: subsub_faceind
@@ -58,11 +63,17 @@ module subsub_commons
   real(dp) :: subsub_alpha, subsub_beta
   logical :: subsub_skipcg
 
-  real(dp), dimension(:,:,:), allocatable :: subsub_hydrobc
+  real(dp), dimension(:,:,:,:,:), allocatable :: subsub_hydrobc
 
   integer :: subsub_debugn, subsub_debugtag
   real(dp) :: subsub_tcheck_cg(40), subsub_tcheck_cg_global(40)
   integer :: subsub_ncheck_cg(10), subsub_ncheck_cg_global(10)
+  real(dp) :: subsub_tstart, subsub_tend, subsub_howlong
+
+  !! BC related
+  !integer :: subsub_ncloudmax
+  
+  !integer, dimension(:), allocatable :: subsub_clouds_ind
 contains
   subroutine subsub_precision_mpi()
     use mpi_mod
