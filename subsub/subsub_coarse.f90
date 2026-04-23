@@ -32,6 +32,12 @@ SUBROUTINE subsub_coarse
 
   if(nsink .eq. 0) return
 
+ 
+
+
+  subsub_v2sink = 0.0D0
+  subsub_cs2sink = 0.0D0
+
   !!----- Update Sink Object
   subsub_nsink_old = subsub_nsink
 
@@ -159,52 +165,5 @@ SUBROUTINE subsub_coarse
 #endif
 
 
-!!
-if(myid.eq.1) then
-  write(*,*) 'DelT coarse', t-subsub_tcheck_cg_global(10)
-  write(*,*) 'Sum of fine', subsub_tcheck_cg_global(1)
-
-  subsub_tcheck_cg_global(10)=t
-endif
-
-do i=1, ncpu
-  if(myid.eq.i) then
-    write(*,*) ' ======= '
-    write(*,*) myid
-    do j=1, subsub_end
-      write(*,*) subsub_obj(j)%sink_id
-    enddo
-  endif
-  do j=1, 100000
-  enddo
-  call MPI_BARRIER(MPI_COMM_WORLD, info)
-enddo
-
-do i=1, subsub_end
-if(subsub_obj(i)%sink_id .eq. 3)then
-  
-  write(*,*)'     niter        = ', subsub_debugtag
-  write(*,*)'     niter(max)        = ', subsub_ncheck_cg(2)
-  write(*,*)'     delta T      = ', subsub_tcheck_cg_global(1)*scale_t
-  write(*,*)'     maxrho       = ', maxval(subsub_obj(i)%hydro(:,1))
-  write(*,*)'     minrho       = ', minval(subsub_obj(i)%hydro(:,1))
-
-  write(*,*)'     maxE       = ', maxval(subsub_obj(i)%hydro(:,5))
-  write(*,*)'     minE       = ', minval(subsub_obj(i)%hydro(:,5))
-
-  write(*,*)'     maxPx       = ', maxval(subsub_obj(i)%hydro(:,2))
-  write(*,*)'     minPx       = ', minval(subsub_obj(i)%hydro(:,2))
-
-  write(*,*)'     maxPy       = ', maxval(subsub_obj(i)%hydro(:,3))
-  write(*,*)'     minPy       = ', minval(subsub_obj(i)%hydro(:,3))
-
-  write(*,*)'     maxPz       = ', maxval(subsub_obj(i)%hydro(:,4))
-  write(*,*)'     minPz       = ', minval(subsub_obj(i)%hydro(:,4))
-
-  subsub_debugtag = 0
-  subsub_tcheck_cg_global(1) = 0.0D0
-  !write(*,*)'     fact2       = ', fact2
-endif
-enddo
 
 END SUBROUTINE subsub_coarse

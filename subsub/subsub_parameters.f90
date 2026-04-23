@@ -37,4 +37,6 @@ module subsub_parameters
   integer :: subsub_dev_gravhydro = 0
   integer :: subsub_dev_gravhydrobh = 0
 
+  integer :: subsub_AccretionMode = 1
+
 end module subsub_parameters

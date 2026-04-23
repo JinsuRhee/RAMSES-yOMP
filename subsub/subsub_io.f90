@@ -639,6 +639,8 @@ subroutine subsub_allocate(subsub_dummy)
   subsub_dummy%uold(:,:) = 0.0D0
   subsub_dummy%edgeBC(:,:) = 0.0D0
   subsub_dummy%faceBC(:,:,:,:,:) = 0.0D0
+  subsub_dummy%v2 = -1.0D0 !! initially negative (working as a flag)
+  subsub_dummy%cs2 = -1.0D0
 
 end subroutine subsub_allocate
 subroutine subsub_deallocate(subsub_dummy)
@@ -653,6 +655,8 @@ subroutine subsub_deallocate(subsub_dummy)
   subsub_dummy%mass_cell = 0.0D0
   subsub_dummy%clevel = 0
   subsub_dummy%domain = 0
+  subsub_dummy%v2 = 0.0D0
+  subsub_dummy%cs2 = 0.0D0
      
   if(allocated(subsub_dummy%hydro)) deallocate(subsub_dummy%hydro)
   if(allocated(subsub_dummy%phi)) deallocate(subsub_dummy%phi)
@@ -758,11 +762,19 @@ subroutine subsub_updatedomain(ilevel)
 
   integer :: ix, iy, iz, ii
   real(dp) :: r, u, v, w
-  real(dp) :: xc, yc, zc, rvx, rvy, rvz, rvv, pold, ekin
+  real(dp) :: xc, yc, zc, rvx, rvy, rvz, rvv, pold, ekin, v2, cs2, ekin_new, rhotot
 
+  !real(dp), allocatable(1:nsink) :: v2_local, cs2_local
 
 
   if(nsink .eq. 0) return
+
+  !!
+!  allocate(v2_local(1:nsink))
+!  allocate(cs2_local(1:nsink))
+!
+!  v2_local(:) = 0.0D0
+!  cs2_local(:) = 0.0D0
 
   !! constants
   nx_loc=(icoarse_max-icoarse_min+1)
@@ -890,23 +902,41 @@ subroutine subsub_updatedomain(ilevel)
       !!----- Initialize for newly allocated
       if(subsub_obj(myind)%new) then 
 
-        !$omp parallel do private(pold, ekin)
+        !v2 = 0.0D0
+        !cs2 = 0.0D0
+        !rhotot = 0.0D0
+        !$omp parallel do private(pold, ekin, ekin_new)
         do j=1, subsub_nn
-          subsub_obj(myind)%hydro(j,1) = subsub_obj(myind)%uold(0,1)!dblarr(1)
+          subsub_obj(myind)%hydro(j,1) = max(subsub_obj(myind)%uold(0,1), subsub_dfloor)
           subsub_obj(myind)%hydro(j,2) = 0.0D0!dblarr(2)
           subsub_obj(myind)%hydro(j,3) = 0.0D0!dblarr(3)
           subsub_obj(myind)%hydro(j,4) = 0.0D0!dblarr(4)
 
           ekin = 0.5D0 * (subsub_obj(myind)%uold(0,2)**2 + subsub_obj(myind)%uold(0,3)**2 + subsub_obj(myind)%uold(0,4)**2) / subsub_obj(myind)%uold(0,1)
+          ekin_new = 0.5D0 * (subsub_obj(myind)%hydro(j,2)**2 + subsub_obj(myind)%hydro(j,3)**2 + subsub_obj(myind)%hydro(j,4)**2) / subsub_obj(myind)%hydro(j,1)
 
-          pold = (subsub_obj(myind)%uold(0,5) - ekin) * (gamma - 1.0D0)
-          subsub_obj(myind)%hydro(j,5) = pold!dblarr(5)
+          pold = max((subsub_obj(myind)%uold(0,5) - ekin) * (gamma - 1.0D0), subsub_pfloor)
+          subsub_obj(myind)%hydro(j,5) = pold/(gamma-1.0D0) + ekin_new
+            
+
+          !! Mass-weighted v2 and cs2
+          !rhotot = rhotot + subsub_obj(myind)%hydro(j,1)
+          !v2 = v2 + ekin_new
+          !cs2 = cs2 + pold / subsub_obj(myind)%hydro(j,1) * subsub_obj(myind)%hydro(j,1)
         enddo
         !$omp end parallel do
+
+
+        !subsub_obj(myind)%v2 = v2 / rhotot
+        !subsub_obj(myind)%cs2 = cs2 / rhotot
+        !v2_local(subsub_dummy%sink_ind) = subsub_obj(myind)%v2
+        !cs2_local(subsub_dummy%sink_ind) = subsub_obj(myind)%cs2
+
+
   
-        !subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
-        !subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
-  
+        subsub_obj(myind)%mass_tot = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
+        subsub_obj(myind)%mass_cell = (subsub_boxlen**ndim) * max(dblarr(1), subsub_dfloor)
+        subsub_obj(myind)%sink_mass = msink(subsub_obj(myind)%sink_ind)
   
         !!----- Some Debugger
   
@@ -1015,6 +1045,18 @@ subroutine subsub_updatedomain(ilevel)
       subsub_obj(myind)%new = .false.
     enddo
   endif
+
+  !! Communicate sink arrays
+!#ifndef WITHOUTMPI
+!  call MPI_ALLREDUCE(v2_local(1), subsub_v2sink(1), nsink, subsub_mpidp, MPI_SUM, MPI_COMM_WORLD, info)
+!  call MPI_ALLREDUCE(cs2_local(1), subsub_cs2sink(1), nsink, subsub_mpidp, MPI_SUM, MPI_COMM_WORLD, info)
+!#else
+!  subsub_v2sink(:) = v2_local(:)
+!  subsub_cs2sink(:) = subsub_cs2sink(:)
+!#endif
+
+!  deallocate(v2_local)
+!  deallocate(cs2_local)
 end subroutine subsub_updatedomain
 !################################################################
 !################################################################

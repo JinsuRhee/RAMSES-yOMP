@@ -471,6 +471,17 @@ subroutine clean_stop
     !if(allocated(subsub_flux_down)) deallocate(subsub_flux_down)
     if(allocated(subsub_dd)) deallocate(subsub_dd)
 
+    if(allocated(subsub_phi)) deallocate(subsub_phi)
+    if(allocated(subsub_phibh)) deallocate(subsub_phibh)
+    if(allocated(subsub_fg)) deallocate(subsub_fg)
+    if(allocated(subsub_cgrhs)) deallocate(subsub_cgrhs)
+    if(allocated(subsub_cgLphi)) deallocate(subsub_cgLphi)
+    if(allocated(subsub_cgRes)) deallocate(subsub_cgRes)
+    if(allocated(subsub_cgp)) deallocate(subsub_cgp)
+    if(allocated(subsub_cgLp)) deallocate(subsub_cgLp)
+    if(allocated(subsub_hydro)) deallocate(subsub_hydro)
+    if(allocated(subsub_csarr)) deallocate(subsub_csarr)
+    if(allocated(subsub_hdummy)) deallocate(subsub_hdummy)
     !if(allocated(subsub_clouds)) deallocate(subsub_clouds)
     !if(allocated(subsub_clouds_ind)) deallocate(subsub_clouds_ind)
 

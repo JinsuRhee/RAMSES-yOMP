@@ -60,6 +60,41 @@ subroutine init_subsub
   if(allocated(subsub_hydrobc)) deallocate(subsub_hydrobc)
   allocate(subsub_hydrobc(1:2, 1:ndim, 1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_nhydro))
 
+
+  if(allocated(subsub_phi)) deallocate(subsub_phi)
+  allocate(subsub_phi(1:subsub_nn))
+
+  if(allocated(subsub_phibh)) deallocate(subsub_phibh)
+  allocate(subsub_phibh(1:subsub_nn))
+
+  if(allocated(subsub_fg)) deallocate(subsub_fg)
+  allocate(subsub_fg(1:subsub_nn, 1:ndim))
+
+  if(allocated(subsub_cgrhs)) deallocate(subsub_cgrhs)
+  allocate(subsub_cgrhs(1:subsub_nn))
+
+  if(allocated(subsub_cgLphi)) deallocate(subsub_cgLphi)
+  allocate(subsub_cgLphi(1:subsub_nn))
+
+  if(allocated(subsub_cgRes)) deallocate(subsub_cgRes)
+  allocate(subsub_cgRes(1:subsub_nn))
+
+  if(allocated(subsub_cgp)) deallocate(subsub_cgp)
+  allocate(subsub_cgp(1:subsub_nn))
+
+  if(allocated(subsub_cgLp)) deallocate(subsub_cgLp)
+  allocate(subsub_cgLp(1:subsub_nn))
+
+  if(allocated(subsub_hydro)) deallocate(subsub_hydro)
+  allocate(subsub_hydro(1:subsub_nn, 1:subsub_nhydro))
+
+  if(allocated(subsub_csarr)) deallocate(subsub_csarr)
+  allocate(subsub_csarr(1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_ngrid))
+  
+  if(allocated(subsub_hdummy)) deallocate(subsub_hdummy)
+  allocate(subsub_hdummy(1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_nhydro, 1:5))
+
+
   !subsub_ncloudmax = (2*ir_cloud+1)**ndim
   !allocate(subsub_clouds(1:subsub_ncloudmax, 1:subsub_nhydro+ndim))
   !allocate(subsub_clouds_ind(1:subsub_ncloudmax))

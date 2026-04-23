@@ -44,7 +44,11 @@ subroutine subsub_fine(ilevel)
 
   tcheck(1) = MPI_WTIME()
 
+  !!----- Update Sink property arrays
+  call subsub_sinkprop
 
+
+  !!----- Compute Boundary conditions using cloud particles
   call subsub_edgeBC
 
   tcheck(2) = MPI_WTIME()
@@ -244,19 +248,7 @@ subroutine subsub_compute(ilevel)
   !!----- RHEE -----
   !! If the memory usage becomes problematic, we may think of reclying arrays below?
   !!----------------
-  allocate(subsub_phi(1:subsub_nn))
-  allocate(subsub_phibh(1:subsub_nn))
-  allocate(subsub_fg(1:subsub_nn, 1:ndim))
-  allocate(subsub_cgrhs(1:subsub_nn))
-  allocate(subsub_cgLphi(1:subsub_nn))
-  allocate(subsub_cgRes(1:subsub_nn))
-  allocate(subsub_cgp(1:subsub_nn))
-  allocate(subsub_cgLp(1:subsub_nn))
-
-  allocate(subsub_hydro(1:subsub_nn, 1:subsub_nhydro))
-  allocate(subsub_csarr(1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_ngrid))
-  !allocate(subsub_hydrobc(1:2, 1:ndim, 1:subsub_nhydro))
-  allocate(subsub_hdummy(1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_ngrid, 1:subsub_nhydro, 1:5))
+  
   !1 conservative old
   !2 primitive old
   !3 Fx
@@ -266,9 +258,7 @@ subroutine subsub_compute(ilevel)
   !! update sink by sink
   do i=1, subsub_end
 
-    !! update some properties
-    subsub_obj(i)%mass_cell = (subsub_boxlen**ndim) * max(subsub_obj(i)%uold(0,1),subsub_dfloor)
-    subsub_obj(i)%sink_mass = msink(subsub_obj(i)%sink_ind)
+    
 !write(*,*) '%112233 beff: ', myid, i, subsub_obj(i)%mass_cell, subsub_obj(i)%mass_tot
     !! update mass_tot
     !mtot_old = subsub_obj(i)%mass_tot
@@ -307,6 +297,10 @@ subroutine subsub_compute(ilevel)
 
    call subsub_computefine(i, ilevel)!, mtot_new, mbh_new)
 
+   !! update some properties
+    subsub_obj(i)%mass_cell = (subsub_boxlen**ndim) * max(subsub_obj(i)%uold(0,1),subsub_dfloor)
+    subsub_obj(i)%sink_mass = msink(subsub_obj(i)%sink_ind)
+
 !if(mtot_new-mtot_old .gt. 0) write(*,*) 'good sink = ', idsink(sinkind)
 !   if(idsink(sinkind) .eq. 829) then
 !     write(*,*) '%456456 mass_old = ', mtot_old
@@ -329,20 +323,6 @@ subroutine subsub_compute(ilevel)
 !write(*,*) '%112233 done ', myid, i, ' / ', subsub_end
 !write(*,*) '%112233 done: ', myid, i, subsub_obj(i)%sink_id, subsub_obj(i)%mass_cell, subsub_obj(i)%mass_tot
   enddo
-  
-  deallocate(subsub_phi)
-  deallocate(subsub_phibh)
-  deallocate(subsub_fg)
-  deallocate(subsub_cgrhs)
-  deallocate(subsub_cgLphi)
-  deallocate(subsub_cgRes)
-  deallocate(subsub_cgp)
-  deallocate(subsub_cgLp)
-
-  deallocate(subsub_hydro)
-  deallocate(subsub_csarr)
-  !deallocate(subsub_hydrobc)
-  deallocate(subsub_hdummy)
 
 end subroutine subsub_compute
 !################################################################
@@ -414,6 +394,7 @@ subroutine subsub_edgeBC!(edgeBC, clouds, ncloud, ncloud_max)
   use subsub_parameters
   use hydro_parameters, ONLY: gamma
   use hydro_commons
+  use cooling_module, ONLY: twopi
   use mpi_mod
   implicit none
 
@@ -432,16 +413,17 @@ subroutine subsub_edgeBC!(edgeBC, clouds, ncloud, ncloud_max)
   integer :: nx_loc, info
 
 
-  real(dp) :: dx, xx, xx2
+  real(dp) :: dx, xx, xx2, dx_min, pi, factG
   real(dp), dimension(1:twotondim, ndim) :: xc
   real(dp), dimension(1:3) :: skip_loc
   integer :: ncloud, ncloudall
 
   real(dp), dimension(1:twotondim, 1:ndim) :: edge
   real(dp) :: halfbox
-  real(dp), dimension(:,:,:), allocatable :: subsub_eBC, subsub_eBCall
+  
   integer :: nn
 
+  real(dp), dimension(1:nsink) :: subsub_r2sink, subsub_r2k
 
 !  integer :: i, j, k, idim, ivar
 !  real(dp) :: halfbox
@@ -455,10 +437,11 @@ subroutine subsub_edgeBC!(edgeBC, clouds, ncloud, ncloud_max)
 !sink_ind
 !ind_grid
 
-
-  !!----- Initial Allocate
+  !!----- Allocate nsink arrays
   allocate(subsub_eBC(1:nsink, 1:twotondim, 0:subsub_nhydro+1))
   allocate(subsub_eBCall(1:nsink, 1:twotondim, 0:subsub_nhydro+1))
+
+  
   subsub_eBC(:,:,:) = 0.0D0
   subsub_eBCall(:,:,:) = 0.0D0
 
@@ -489,6 +472,19 @@ subroutine subsub_edgeBC!(edgeBC, clouds, ncloud, ncloud_max)
   skip_loc(3)=dble(kcoarse_min)
   nx_loc=(icoarse_max-icoarse_min+1)
   scale=boxlen/dble(nx_loc)
+
+  
+  dx_min=scale*0.5d0**(nlevelmax-nlevelsheld)/aexp
+
+  pi=twopi/2d0
+  factG=1.0D0
+  if(cosmo)factG=3d0/8d0/pi*omega_m*aexp
+
+  !!----- Compute r2sink first
+  do i=1, nsink
+    subsub_r2sink(i) = (factG * msink(i) / (subsub_v2sink(i) + subsub_cs2sink(i)))**2
+    subsub_r2k(i) = min( max(subsub_r2sink(i), (dx_min/4.0D0)**2), (2.0*dx_min)**2 )
+  enddo
 
 
   !!----- Get Cloud particles in this domain
@@ -541,8 +537,10 @@ subroutine subsub_edgeBC!(edgeBC, clouds, ncloud, ncloud_max)
               ry = xsink(sink_ind,2)/scale + edge(ind,2)
               rz = xsink(sink_ind,3)/scale + edge(ind,3)
 
-              d2 = (xp(ipart,1)/scale - rx)**2 + (xp(ipart,2)/scale - ry)**2 + (xp(ipart,3)/scale - rz)**2 + subsub_smallr**2
-              d2 = 1.0D0 / d2
+              d2 = (xp(ipart,1)/scale - rx)**2 + (xp(ipart,2)/scale - ry)**2 + (xp(ipart,3)/scale - rz)**2! + subsub_smallr**2
+              d2 = exp(-d2 / subsub_r2k(sink_ind))
+              !d2 = 1.0D0 / d2
+
             
               !subsub_eBC(sink_ind,ind,6) = subsub_eBC(sink_ind,ind,6) + 1.0D0
               subsub_eBC(sink_ind,ind,0) = subsub_eBC(sink_ind,ind,0) + d2
@@ -592,9 +590,10 @@ subroutine subsub_edgeBC!(edgeBC, clouds, ncloud, ncloud_max)
     enddo
   endif
 
-
+  !!---- Deallocate
   deallocate(subsub_eBC)
   deallocate(subsub_eBCall)
+  
 
 end subroutine subsub_edgeBC
 !################################################################
@@ -677,6 +676,81 @@ subroutine subsub_faceBC
 
 
 end subroutine subsub_faceBC
+!################################################################
+!################################################################
+!################################################################
+!################################################################
+subroutine subsub_sinkprop
+  use subsub_commons
+  use hydro_parameters, ONLY : gamma
+  use pm_commons
+  use mpi_mod
+  implicit none
+
+  !! Local variables
+  integer :: myobj, i
+  integer :: info
+  real(dp), dimension(1:nsink) :: v2_local, cs2_local
+
+  real(dp) :: rhotot, v2tmp, cs2tmp
+  real(dp) :: rho, u, v, w, p, ekin
+
+  !! Initialize
+  allocate(subsub_v2sink(1:nsink))
+  allocate(subsub_cs2sink(1:nsink))
+  
+  v2_local(:) = 0.0D0
+  cs2_local(:) = 0.0D0
+  subsub_v2sink(:) = 0.0D0
+  subsub_cs2sink(:) = 0.0D0
+
+  !! Retrieve
+  if(subsub_end .gt. 0) then
+    do myobj=1, subsub_end
+      !! never computed; compute here
+      if(subsub_obj(myobj)%v2 .lt. 0)then
+        rhotot = 0.0D0
+        v2tmp = 0.0D0
+        cs2tmp = 0.0D0
+        !$omp parallel do private(rho, u, v, w, p, ekin) reduction(+:rhotot, v2tmp, cs2tmp)
+        do i=1, subsub_nn
+          !! Mass-weighted v2 and cs2
+          rho = max(subsub_obj(myobj)%hydro(i,1), subsub_dfloor)
+          u = subsub_obj(myobj)%hydro(i,2) / rho
+          v = subsub_obj(myobj)%hydro(i,3) / rho
+          w = subsub_obj(myobj)%hydro(i,4) / rho
+          ekin = (u**2 + v**2 + w**2)*0.5D0 * rho
+          p = max((subsub_obj(myobj)%hydro(i,5) - ekin) / (gamma - 1.0D0), subsub_pfloor)
+
+          rhotot = rhotot + rho
+          v2tmp = v2tmp + ekin*2.0D0
+          cs2tmp = cs2tmp + rho * (p/rho)
+        enddo
+        !$omp end parallel do
+
+        subsub_obj(myobj)%v2 = v2tmp
+        subsub_obj(myobj)%cs2 = cs2tmp
+      endif
+      v2_local(subsub_obj(myobj)%sink_ind) = subsub_obj(myobj)%v2
+      cs2_local(subsub_obj(myobj)%sink_ind) = subsub_obj(myobj)%cs2
+
+
+    enddo
+  endif
+
+  !! Communicate
+#ifndef WITHOUTMPI
+  call MPI_ALLREDUCE(v2_local(1), subsub_v2sink(1), nsink, subsub_mpidp, MPI_SUM, MPI_COMM_WORLD, info)
+  call MPI_ALLREDUCE(cs2_local(1), subsub_cs2sink(1), nsink, subsub_mpidp, MPI_SUM, MPI_COMM_WORLD, info)
+#else
+  subsub_v2sink(:) = v2_local(:)
+  subsub_cs2sink(:) = subsub_cs2sink(:)
+#endif
+  
+  !! Deallocation
+  deallocate(subsub_v2sink)
+  deallocate(subsub_cs2sink)
+end subroutine subsub_sinkprop
 !################################################################
 !################################################################
 !################################################################

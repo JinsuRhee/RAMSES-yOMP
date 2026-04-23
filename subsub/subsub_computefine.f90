@@ -367,12 +367,16 @@ subroutine subsub_cgkdk(objind, ilevel)
 !!-----------------------------------------------------------------
 !! Save Phi from Sink
 !!-----------------------------------------------------------------
-  !$omp do
-  do i=1, subsub_nn
-    subsub_phibh(i) = fact2/subsub_dd(i)
-  enddo
-  !$omp end do
+    !$omp do
+    do i=1, subsub_nn
+      subsub_phibh(i) = fact2/subsub_dd(i)
+    enddo
+    !$omp end do
 
+!!-----------------------------------------------------------------
+!! Accretion
+!!-----------------------------------------------------------------
+    !call subsub_accretion
 
 !!-----------------------------------------------------------------
 !! Compute Phi by CG (rho_n -> phi_n)
@@ -2622,6 +2626,100 @@ end subroutine subsub_enforce_floors
 !################################################################
 !################################################################
 !################################################################
+subroutine subsub_accretion(delMbh, macc)
+  use subsub_commons
+  use pm_commons
+  use amr_commons
+  
+  implicit none
+  real(dp) :: delMbh, macc
+  
+
+  return
+
+  !delMbh = msink(subsub_obj(objind)%sink_ind) - subsub_obj(objind)%sink_mass
+  !delMbh = delMbh / dtnew(ilevelmin) * t0
+
+  
+  select case(subsub_AccretionMode)
+  case(1)
+!!-----------------------------------------------------------------
+!! Spherical accretion
+!!-----------------------------------------------------------------
+  call subsub_accretion_spherical(delMbh, macc)
+
+  end select
+
+end subroutine subsub_accretion
+!################################################################
+!################################################################
+!################################################################
+!################################################################
+subroutine subsub_accretion_spherical(delMbh, macc)
+  use subsub_commons
+  use hydro_parameters, ONLY : gamma
+  implicit none
+  real(dp) :: delMbh, macc
+
+  !! Local variables
+  integer :: i, j, k, ibin
+  real(dp) :: drad, subsub_dx3, m0, rad_col, macc_tmp
+  real(dp), dimension(1:subsub_ngrid) :: marray
+
+  !! Make a radial array
+  drad = (subsub_boxlen/2.0D0)*sqrt(3.0D0) / dble(subsub_ngrid)
+  subsub_dx3 = subsub_dx**3.0D0
+
+  !! Find a collapse radius using a binned array
+  !$omp do private(ibin) reduction(+:marray)
+  do i=1, subsub_nn
+    ibin = int(subsub_dd(i) / drad) + 1
+    if(ibin .gt. subsub_ngrid) then
+      write(*,*) ibin, i, '!?'
+      stop
+    endif
+    marray(ibin) = subsub_hydro(i,1) * subsub_dx3
+  enddo
+  !$omp end do
+
+  m0 = 0.0D0
+  do i=1, subsub_ngrid
+    m0 = m0 + marray(i)
+
+    if(m0 .gt. delMbh)then
+      rad_col = (dble(i) - 0.5D0) * drad
+      exit
+    endif
+  enddo
+
+  rad_col = min(0.5d0*subsub_boxlen, rad_col)
+
+  macc_tmp = 0.0D0
+  !! Accretion
+  !$omp do
+  do i=1, subsub_nn
+    if(subsub_dd(i) .le. rad_col)then
+      macc_tmp = macc_tmp + subsub_hydro(i,1) * subsub_dx3
+
+      subsub_hydro(i,1) = subsub_dfloor
+      subsub_hydro(i,2) = 0.0D0
+      subsub_hydro(i,3) = 0.0D0
+      subsub_hydro(i,4) = 0.0D0
+      subsub_hydro(i,5) = subsub_pfloor / (gamma - 1.0D0)
+    endif
+  enddo
+  !$omp end do
+
+  !$omp critical
+  macc = macc + macc_tmp
+  !$omp end critical
+
+  write(*,*)' test macc'
+end subroutine subsub_accretion_spherical
+!################################################################
+!################################################################
+!################################################################
+!################################################################
 subroutine subsub_hydroRiemann_Rusanov_periodicBC(dt)!, hbc)
   use amr_commons
   use subsub_commons
@@ -3084,7 +3182,7 @@ endif
   enddo
   !$omp end do
 
-end subroutine
+end subroutine subsub_hydroRiemann_Rusanov_periodicBC
 !################################################################
 !################################################################
 !################################################################

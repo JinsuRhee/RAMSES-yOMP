@@ -23,6 +23,7 @@ module subsub_commons
      real(dp), dimension(:,:), allocatable :: edgeBC
      real(dp), dimension(:,:,:,:,:), allocatable :: faceBC
 
+     real(dp) :: v2, cs2
      logical :: new
      !! Not used at the moment
      !real(dp), dimension(:,:), allocatable :: fg !! ngrid^3 X ndim
@@ -69,6 +70,11 @@ module subsub_commons
   real(dp) :: subsub_tcheck_cg(40), subsub_tcheck_cg_global(40)
   integer :: subsub_ncheck_cg(10), subsub_ncheck_cg_global(10)
   real(dp) :: subsub_tstart, subsub_tend, subsub_howlong
+
+  real(dp), dimension(:,:,:), allocatable :: subsub_eBC, subsub_eBCall
+  
+  !! sink properties
+  real(dp), dimension(:), allocatable :: subsub_v2sink, subsub_cs2sink
 
   !! BC related
   !integer :: subsub_ncloudmax
